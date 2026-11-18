@@ -1,0 +1,75 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Pytest / Unit Test Cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node.js & Frontend Build Outputs
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# AI Models & Large Binary Weights (Tải tự động qua Model Hub)
+models/**
+!models/
+!models/*/
+!models/**/.gitkeep
+*.bin
+*.gguf
+*.onnx
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Portable Engine Binaries (Tự động tải về qua Model Hub)
+bin/*
+!bin/**/.gitkeep
+*.exe
+*.dll
+
+# Projects & User Media Data
+projects/*
+!projects/**/.gitkeep
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.wav
+*.mp3
+*.flac
+
+# Intermediate Module Outputs
+modules/**/output/*
+!modules/**/output/.gitkeep
+modules/**/cache/
+
+# Environment Variables & Local Secrets
+.env
+.env.local
+.env.*.local
+
+# IDE & OS Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
