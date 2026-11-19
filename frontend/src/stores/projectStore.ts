@@ -66,6 +66,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       project,
       activeStep: project?.currentStep || 1
     })
+    if (project?.projectId) {
+      try {
+        localStorage.setItem('last_project_id', project.projectId)
+      } catch {}
+    }
     if (project?.cues && Array.isArray(project.cues)) {
       useCueStore.getState().setCues(project.cues)
     }
@@ -180,6 +185,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         activeStep: data.currentStep || 1,
         isLoading: false
       })
+      try {
+        localStorage.setItem('last_project_id', data.projectId)
+      } catch {}
       if (data.cues && Array.isArray(data.cues)) {
         useCueStore.getState().setCues(data.cues)
       }

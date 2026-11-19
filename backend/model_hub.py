@@ -34,7 +34,7 @@ MODEL_CATALOG: Dict[str, Dict[str, Any]] = {
         "vram_required_mb": 800,
         "hardware_tier": "cpu",
         "description": "Siêu nhẹ, tốc độ cực nhanh, phù hợp máy cấu hình yếu hoặc chỉ dùng CPU.",
-        "download_url": "https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/model.bin",
+        "download_url": "https://hf-mirror.com/Systran/faster-whisper-tiny/resolve/main/model.bin",
         "dest_dir": "asr/whisper-tiny",
         "target_file": "model.bin",
     },
@@ -46,7 +46,7 @@ MODEL_CATALOG: Dict[str, Dict[str, Any]] = {
         "vram_required_mb": 1500,
         "hardware_tier": "recommended",
         "description": "Cân bằng hoàn hảo giữa độ chính xác nhận diện và tài nguyên VRAM (tối ưu cho GTX 1060 6GB).",
-        "download_url": "https://huggingface.co/Systran/faster-whisper-small/resolve/main/model.bin",
+        "download_url": "https://hf-mirror.com/Systran/faster-whisper-small/resolve/main/model.bin",
         "dest_dir": "asr/whisper-small",
         "target_file": "model.bin",
     },
@@ -58,47 +58,35 @@ MODEL_CATALOG: Dict[str, Dict[str, Any]] = {
         "vram_required_mb": 2600,
         "hardware_tier": "high",
         "description": "Độ chính xác rất cao, nhận diện chuẩn ngữ cảnh phức tạp (yêu cầu GPU từ 8GB VRAM).",
-        "download_url": "https://huggingface.co/Systran/faster-whisper-medium/resolve/main/model.bin",
+        "download_url": "https://hf-mirror.com/Systran/faster-whisper-medium/resolve/main/model.bin",
         "dest_dir": "asr/whisper-medium",
         "target_file": "model.bin",
     },
 
     # 2. Dịch máy chuyên sâu (MT - Tencent Hunyuan Hy-MT2 1.8B GGUF)
-    "hy-mt2-1.8b-q8": {
-        "id": "hy-mt2-1.8b-q8",
-        "category": "mt",
-        "name": "Hy MT2 1.8B Q8_0 (Khuyên dùng mặc định)",
-        "size_mb": 1910,
-        "vram_required_mb": 2100,
-        "hardware_tier": "recommended",
-        "description": "Bản lượng tử hóa chất lượng cao 8-bit (1.91 GB). Bảo toàn trọn vẹn ngữ nghĩa và độ chính xác dịch thuật tối đa.",
-        "download_url": "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q8_0.gguf",
-        "dest_dir": "mt",
-        "target_file": "Hy-MT2-1.8B-Q8_0.gguf",
-    },
     "hy-mt2-1.8b-q4": {
         "id": "hy-mt2-1.8b-q4",
         "category": "mt",
-        "name": "Tencent Hy-MT2 1.8B (Q4_K_M - Cân bằng)",
+        "name": "Tencent Hy-MT2 1.8B (Q4_K_M - Chuẩn cân bằng)",
         "size_mb": 1150,
         "vram_required_mb": 1800,
         "hardware_tier": "recommended",
-        "description": "Chất lượng dịch vượt trội API thương mại, chuẩn ngữ cảnh phim và video đa ngữ (tối ưu cho GTX 1060).",
-        "download_url": "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf",
+        "description": "Chất lượng dịch vượt trội API thương mại, chuẩn ngữ cảnh phim và video đa ngữ (chạy tốt cả CPU & GPU).",
+        "download_url": "https://hf-mirror.com/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf",
         "dest_dir": "mt",
         "target_file": "Hy-MT2-1.8B-Q4_K_M.gguf",
     },
-    "hy-mt2-1.8b-q125": {
-        "id": "hy-mt2-1.8b-q125",
+    "hy-mt2-1.8b-q8": {
+        "id": "hy-mt2-1.8b-q8",
         "category": "mt",
-        "name": "Tencent Hy-MT2 1.8B (Q1.25 Ultra-Light)",
-        "size_mb": 440,
-        "vram_required_mb": 900,
-        "hardware_tier": "cpu",
-        "description": "Nén siêu phân giải AngelSlim 1.25-bit chỉ 440MB. Chạy mượt mà trên CPU hoặc máy yếu.",
-        "download_url": "https://huggingface.co/tencent/Hy-MT2-1.8B-1.25bit-GGUF/resolve/main/Hy-MT2-1.8B-1.25Bit.gguf",
+        "name": "Hy MT2 1.8B Q8_0 (Chất lượng tối đa)",
+        "size_mb": 1910,
+        "vram_required_mb": 2100,
+        "hardware_tier": "high",
+        "description": "Bản lượng tử hóa chất lượng cao 8-bit (1.91 GB). Bảo toàn trọn vẹn ngữ nghĩa và độ chính xác dịch thuật tối đa.",
+        "download_url": "https://hf-mirror.com/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q8_0.gguf",
         "dest_dir": "mt",
-        "target_file": "Hy-MT2-1.8B-1.25Bit.gguf",
+        "target_file": "Hy-MT2-1.8B-Q8_0.gguf",
     },
 
     # 3. Tổng hợp giọng đọc (TTS - VieNeu v3 Turbo)
@@ -110,7 +98,7 @@ MODEL_CATALOG: Dict[str, Dict[str, Any]] = {
         "vram_required_mb": 1500,
         "hardware_tier": "recommended",
         "description": "Bộ 18 giọng đọc đa vùng miền Bắc - Trung - Nam, hỗ trợ đọc diễn cảm và co dãn tốc độ linh hoạt.",
-        "download_url": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo/resolve/main/model.safetensors",
+        "download_url": "https://hf-mirror.com/pnnbao-ump/VieNeu-TTS-v3-Turbo/resolve/main/model.safetensors",
         "dest_dir": "tts",
         "target_file": "model.safetensors",
     },
@@ -182,8 +170,56 @@ def get_models_status() -> List[Dict[str, Any]]:
     return results
 
 
+def ensure_llama_server() -> bool:
+    """Tự động kiểm tra và tải portable llama-server.exe (Windows x64) vào bin/ nếu chưa có."""
+    bin_dir = ROOT_DIR / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    llama_exe = bin_dir / "llama-server.exe"
+    if llama_exe.exists():
+        return True
+
+    zip_url = "https://github.com/ggml-org/llama.cpp/releases/download/b12530/llama-b12530-bin-win-cpu-x64.zip"
+    temp_zip = bin_dir / "llama_server_temp.zip"
+    try:
+        req = urllib.request.Request(zip_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=120) as resp, open(temp_zip, "wb") as out_f:
+            shutil.copyfileobj(resp, out_f)
+
+        import zipfile
+        with zipfile.ZipFile(temp_zip, "r") as zf:
+            zf.extractall(bin_dir)
+
+        if temp_zip.exists():
+            temp_zip.unlink()
+
+        return llama_exe.exists()
+    except Exception:
+        if temp_zip.exists():
+            try:
+                temp_zip.unlink()
+            except Exception:
+                pass
+        return False
+
+
+CURRENT_DOWNLOADING_MODEL_ID: Optional[str] = None
+
+
 async def stream_download_model(model_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-    """Tải model với SSE tiến độ phần trăm real-time."""
+    """Tải model với SSE tiến độ phần trăm real-time. Chỉ cho phép tải 1 model tại một thời điểm."""
+    global CURRENT_DOWNLOADING_MODEL_ID
+
+    if CURRENT_DOWNLOADING_MODEL_ID is not None and CURRENT_DOWNLOADING_MODEL_ID != model_id:
+        active_name = MODEL_CATALOG.get(CURRENT_DOWNLOADING_MODEL_ID, {}).get("name", CURRENT_DOWNLOADING_MODEL_ID)
+        yield {
+            "event": "error",
+            "data": {
+                "message": f"Hệ thống đang tải mô hình '{active_name}'. Vui lòng chờ tải xong trước khi tải mô hình khác!",
+                "activeModelId": CURRENT_DOWNLOADING_MODEL_ID
+            }
+        }
+        return
+
     if model_id not in MODEL_CATALOG:
         yield {
             "event": "error",
@@ -197,6 +233,7 @@ async def stream_download_model(model_id: str) -> AsyncGenerator[Dict[str, Any],
     target_file = dest_dir / info["target_file"]
     temp_file = dest_dir / f"{info['target_file']}.download"
 
+    CURRENT_DOWNLOADING_MODEL_ID = model_id
     url = info["download_url"]
     yield {
         "event": "start",
@@ -246,6 +283,10 @@ async def stream_download_model(model_id: str) -> AsyncGenerator[Dict[str, Any],
                         except Exception:
                             pass
 
+            # Nếu là MT Model, tự động tải portable llama-server.exe vào bin/ nếu chưa có
+            if info.get("category") == "mt":
+                ensure_llama_server()
+
         # Chạy tải ngầm trong thread riêng để không block FastAPI
         loop = asyncio.get_running_loop()
         download_task = loop.run_in_executor(None, _download)
@@ -289,3 +330,5 @@ async def stream_download_model(model_id: str) -> AsyncGenerator[Dict[str, Any],
                 "message": f"Lỗi tải model: {str(e)}"
             }
         }
+    finally:
+        CURRENT_DOWNLOADING_MODEL_ID = None

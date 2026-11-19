@@ -7,24 +7,42 @@ import { TranslationStep } from './components/steps/TranslationStep'
 import { NarrationStep } from './components/steps/NarrationStep'
 import { ExportStep } from './components/steps/ExportStep'
 import { useProjectStore } from './stores/projectStore'
-import { useCueStore } from './stores/cueStore'
+import { useModelStore } from './stores/modelStore'
 
 export const App: React.FC = () => {
   const activeStep = useProjectStore((s) => s.activeStep)
   const loadProject = useProjectStore((s) => s.loadProject)
-  const setCues = useCueStore((s) => s.setCues)
+  const fetchModels = useModelStore((s) => s.fetchModels)
 
-  // Attempt to load default project on initial mount if available
   useEffect(() => {
-    loadProject('prj_20261117_001').then((success) => {
-      if (success) {
-        const loaded = useProjectStore.getState().project
-        if (loaded?.cues) {
-          setCues(loaded.cues)
+    fetchModels()
+  }, [fetchModels])
+
+  // Tự động khôi phục dự án gần nhất nếu có trong hệ thống
+  useEffect(() => {
+    const autoRestoreProject = async () => {
+      try {
+        const res = await fetch('/api/project/list')
+        if (!res.ok) return
+        const data = await res.json()
+        const projectList: Array<{ projectId: string }> = data.projects || []
+        if (projectList.length === 0) return
+
+        let targetId = localStorage.getItem('last_project_id')
+        if (!targetId || !projectList.some((p) => p.projectId === targetId)) {
+          targetId = projectList[0].projectId
         }
+
+        if (targetId) {
+          await loadProject(targetId)
+        }
+      } catch {
+        // Bỏ qua lỗi ngầm khi khởi động ban đầu
       }
-    })
-  }, [loadProject, setCues])
+    }
+
+    autoRestoreProject()
+  }, [loadProject])
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 select-none">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   X,
   Download,
@@ -14,172 +14,30 @@ import {
   Layers,
   Zap
 } from 'lucide-react'
-import type { ModelItem, HardwareInfo } from '../types'
+import { useModelStore } from '../stores/modelStore'
 
 interface ModelHubModalProps {
   isOpen: boolean
   onClose: () => void
 }
 
-interface DownloadProgress {
-  modelId: string
-  percent: number
-  downloadedMb: number
-  totalMb: number
-  isDownloading: boolean
-  error?: string
-}
-
 export const ModelHubModal: React.FC<ModelHubModalProps> = ({ isOpen, onClose }) => {
-  const [hardware, setHardware] = useState<HardwareInfo | null>(null)
-  const [models, setModels] = useState<ModelItem[]>([])
-  const [recommendedIds, setRecommendedIds] = useState<{ [key: string]: string }>({})
-  const [isLoading, setIsLoading] = useState(false)
+  const models = useModelStore((s) => s.models)
+  const hardware = useModelStore((s) => s.hardware)
+  const recommendedIds = useModelStore((s) => s.recommended)
+  const isLoading = useModelStore((s) => s.isLoading)
+  const downloadingModelId = useModelStore((s) => s.downloadingModelId)
+  const downloads = useModelStore((s) => s.downloads)
+  const fetchStatus = useModelStore((s) => s.fetchModels)
+  const handleDownload = useModelStore((s) => s.downloadModel)
+
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'asr' | 'mt' | 'tts'>('all')
-
-  // Quản lý tiến trình tải theo từng modelId
-  const [downloads, setDownloads] = useState<{ [modelId: string]: DownloadProgress }>({})
-
-  // Fetch trạng thái model từ backend
-  const fetchStatus = useCallback(async () => {
-    setIsLoading(true)
-    try {
-      const res = await fetch('/api/models/status')
-      if (res.ok) {
-        const data = await res.json()
-        setHardware(data.hardware)
-        setModels(data.models || [])
-      }
-
-      const recRes = await fetch('/api/models/recommendations')
-      if (recRes.ok) {
-        const recData = await recRes.json()
-        setRecommendedIds(recData.recommended || {})
-      }
-    } catch (err) {
-      console.warn('Lỗi khi tải danh sách model:', err)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
 
   useEffect(() => {
     if (isOpen) {
       fetchStatus()
     }
   }, [isOpen, fetchStatus])
-
-  // Tải model 1-Click qua SSE Stream
-  const handleDownload = async (modelId: string) => {
-    setDownloads((prev) => ({
-      ...prev,
-      [modelId]: {
-        modelId,
-        percent: 0,
-        downloadedMb: 0,
-        totalMb: 0,
-        isDownloading: true
-      }
-    }))
-
-    try {
-      const response = await fetch('/api/models/download', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream'
-        },
-        body: JSON.stringify({ modelId })
-      })
-
-      if (!response.ok) {
-        throw new Error(`Lỗi máy chủ: ${response.status}`)
-      }
-
-      const reader = response.body?.getReader()
-      if (!reader) throw new Error('Không thể đọc luồng dữ liệu')
-
-      const decoder = new TextDecoder('utf-8')
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const blocks = buffer.split('\n\n')
-        buffer = blocks.pop() || ''
-
-        for (const block of blocks) {
-          if (!block.trim()) continue
-          const lines = block.split('\n')
-          let eventType = 'message'
-          let rawData = ''
-
-          for (const line of lines) {
-            if (line.startsWith('event:')) {
-              eventType = line.replace('event:', '').trim()
-            } else if (line.startsWith('data:')) {
-              rawData = line.replace('data:', '').trim()
-            }
-          }
-
-          if (!rawData) continue
-
-          try {
-            const parsed = JSON.parse(rawData)
-
-            if (eventType === 'progress') {
-              setDownloads((prev) => ({
-                ...prev,
-                [modelId]: {
-                  modelId,
-                  percent: parsed.percent || 0,
-                  downloadedMb: parsed.downloadedMb || 0,
-                  totalMb: parsed.totalMb || 0,
-                  isDownloading: true
-                }
-              }))
-            } else if (eventType === 'complete') {
-              setDownloads((prev) => ({
-                ...prev,
-                [modelId]: {
-                  modelId,
-                  percent: 100,
-                  downloadedMb: parsed.totalMb || 0,
-                  totalMb: parsed.totalMb || 0,
-                  isDownloading: false
-                }
-              }))
-              // Cập nhật lại trạng thái sau khi tải xong
-              fetchStatus()
-            } else if (eventType === 'error') {
-              setDownloads((prev) => ({
-                ...prev,
-                [modelId]: {
-                  ...prev[modelId],
-                  isDownloading: false,
-                  error: parsed.message || 'Lỗi tải tệp'
-                }
-              }))
-            }
-          } catch (e) {
-            console.warn('Lỗi parse SSE:', e)
-          }
-        }
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Lỗi kết nối'
-      setDownloads((prev) => ({
-        ...prev,
-        [modelId]: {
-          ...prev[modelId],
-          isDownloading: false,
-          error: msg
-        }
-      }))
-    }
-  }
 
   if (!isOpen) return null
 
@@ -358,6 +216,15 @@ export const ModelHubModal: React.FC<ModelHubModalProps> = ({ isOpen, onClose })
                           <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
                           <span>Đang tải {dlState.percent}%</span>
                         </div>
+                      ) : downloadingModelId ? (
+                        <button
+                          disabled
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-500 text-xs font-medium cursor-not-allowed opacity-60"
+                          title="Hệ thống chỉ cho phép tải 1 model tại một thời điểm để đảm bảo tốc độ và ổn định."
+                        >
+                          <Download className="w-4 h-4" />
+                          <span>Chờ model khác...</span>
+                        </button>
                       ) : (
                         <button
                           onClick={() => handleDownload(m.id)}

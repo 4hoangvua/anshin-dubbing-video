@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Languages,
   RefreshCw,
@@ -8,11 +8,14 @@ import {
   Users,
   Check,
   AlertCircle,
-  Layers
+  Layers,
+  Download,
+  Loader2
 } from 'lucide-react'
 import { useProjectStore } from '../../stores/projectStore'
 import { useCueStore } from '../../stores/cueStore'
 import { usePlayerStore } from '../../stores/playerStore'
+import { useModelStore } from '../../stores/modelStore'
 import { useSSE } from '../../hooks/useSSE'
 import { VirtualCueTable } from '../virtual/VirtualCueTable'
 import { ModelHubModal } from '../ModelHubModal'
@@ -31,10 +34,18 @@ export const TranslationStep: React.FC = () => {
   const seekTo = usePlayerStore((s) => s.seekTo)
   const setIsPlaying = usePlayerStore((s) => s.setIsPlaying)
 
+  const models = useModelStore((s) => s.models)
+  const recommendedIds = useModelStore((s) => s.recommended)
+  const downloadingModelId = useModelStore((s) => s.downloadingModelId)
+  const downloads = useModelStore((s) => s.downloads)
+  const downloadModel = useModelStore((s) => s.downloadModel)
+
+  const mtModels = useMemo(() => models.filter((m) => m.category === 'mt'), [models])
+
   const { isRunning, percent, stage, message, startStream, stopStream, error } = useSSE()
 
   // Local settings
-  const [mtEngine, setMtEngine] = useState<string>('hy-mt2-1.8b-q8')
+  const [mtEngine, setMtEngine] = useState<string>('hy-mt2-1.8b-q4')
   const [genre, setGenre] = useState<string>(project?.settings.translationGenre || 'tech_tutorial')
   const [persona, setPersona] = useState<string>(project?.settings.translationPersona || 'neutral')
   const [tgtLang, setTgtLang] = useState<string>(project?.settings.targetLang || 'vi')
@@ -42,6 +53,28 @@ export const TranslationStep: React.FC = () => {
   const [showConfig, setShowConfig] = useState<boolean>(false)
   const [showPronouns, setShowPronouns] = useState<boolean>(false)
   const [showModelHub, setShowModelHub] = useState<boolean>(false)
+
+  // Tự động chọn model đã tải sẵn và tối ưu cho máy
+  useEffect(() => {
+    if (mtModels.length > 0) {
+      const isCurrentDownloaded = mtModels.some((m) => m.id === mtEngine && m.is_downloaded)
+      if (!isCurrentDownloaded) {
+        const firstDownloaded = mtModels.find((m) => m.is_downloaded)
+        if (firstDownloaded) {
+          if (firstDownloaded.id !== mtEngine) setMtEngine(firstDownloaded.id)
+        } else if (recommendedIds.mtModel && mtModels.some((m) => m.id === recommendedIds.mtModel)) {
+          if (recommendedIds.mtModel !== mtEngine) setMtEngine(recommendedIds.mtModel)
+        } else {
+          if (mtModels[0].id !== mtEngine) setMtEngine(mtModels[0].id)
+        }
+      }
+    }
+  }, [mtModels, recommendedIds.mtModel, mtEngine])
+
+  const selectedModel = mtModels.find((m) => m.id === mtEngine)
+  const isSelectedDownloaded = selectedModel?.is_downloaded ?? false
+  const isSelectedDownloading = selectedModel ? downloadingModelId === selectedModel.id : false
+  const selectedProgress = selectedModel ? downloads[selectedModel.id] : undefined
 
   // Single cue translation state
   const [singleTranslatingId, setSingleTranslatingId] = useState<number | null>(null)
@@ -207,9 +240,21 @@ export const TranslationStep: React.FC = () => {
                 onChange={(e) => setMtEngine(e.target.value)}
                 className="bg-slate-800 border border-indigo-500/40 rounded px-2 py-1 text-xs text-indigo-300 font-semibold focus:outline-none focus:border-indigo-500 shadow-sm"
               >
-                <option value="hy-mt2-1.8b-q8">🎯 Hy-MT2 1.8B (Q8_0 - Mặc định)</option>
-                <option value="hy-mt2-1.8b-q4">⚡ Hy-MT2 1.8B (Q4_K_M)</option>
-                <option value="hy-mt2-1.8b-q125">🪶 Hy-MT2 1.8B (Q1.25 - 440MB)</option>
+                {mtModels.length > 0 ? (
+                  mtModels.map((m) => {
+                    const isRec = recommendedIds.mtModel === m.id
+                    return (
+                      <option key={m.id} value={m.id}>
+                        {m.is_downloaded ? '🟢 [Sẵn sàng]' : '☁️ [Chưa tải]'} {m.name} {isRec ? '⭐ Khuyên dùng' : ''} {!m.is_downloaded ? `(${m.size_mb >= 1000 ? (m.size_mb / 1024).toFixed(1) + ' GB' : m.size_mb + ' MB'})` : ''}
+                      </option>
+                    )
+                  })
+                ) : (
+                  <>
+                    <option value="hy-mt2-1.8b-q4">⚡ Hy-MT2 1.8B (Q4_K_M)</option>
+                    <option value="hy-mt2-1.8b-q8">🎯 Hy-MT2 1.8B (Q8_0)</option>
+                  </>
+                )}
               </select>
             </div>
 
@@ -296,18 +341,35 @@ export const TranslationStep: React.FC = () => {
             {isRunning ? (
               <button
                 onClick={stopStream}
-                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow transition"
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow transition cursor-pointer"
               >
                 <span>Dừng dịch</span>
+              </button>
+            ) : isSelectedDownloading ? (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 bg-indigo-950/80 border border-indigo-700/60 rounded text-xs text-indigo-300 font-semibold shadow">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                <span>Đang tải {selectedProgress?.percent || 0}% ({selectedProgress?.downloadedMb || 0} MB)...</span>
+              </div>
+            ) : !isSelectedDownloaded && selectedModel ? (
+              <button
+                onClick={() => downloadModel(selectedModel.id)}
+                disabled={!!downloadingModelId}
+                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 active:bg-amber-700 disabled:opacity-50 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-amber-600/30 transition cursor-pointer"
+                title="Mô hình này chưa có trên máy. Bấm vào đây để tải trực tiếp 1-click!"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>
+                  {downloadingModelId ? 'Đang có model khác tải...' : `Tải mô hình này (${selectedModel.size_mb >= 1000 ? (selectedModel.size_mb / 1024).toFixed(1) + ' GB' : selectedModel.size_mb + ' MB'})`}
+                </span>
               </button>
             ) : (
               <button
                 onClick={handleStartTranslateAll}
                 disabled={!project || cues.length === 0}
-                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/30 transition"
+                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/30 transition cursor-pointer"
               >
                 <Languages className="w-3.5 h-3.5" />
-                <span>Dịch toàn bộ (Hy-MT2 1.8B)</span>
+                <span>Dịch toàn bộ ({selectedModel?.name ? selectedModel.name.split('(')[0].trim() : 'Hy-MT2 1.8B'})</span>
               </button>
             )}
           </div>

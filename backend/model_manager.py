@@ -168,10 +168,14 @@ class ModelManager:
 
     def acquire_slot(self, task_name: str, project_id: str) -> None:
         if self.is_busy:
-            raise RuntimeError(
-                f"TASK_ALREADY_RUNNING: Tác vụ '{self.current_task_name}' đang chiếm dụng GPU cho dự án '{self.current_project_id}'. "
-                "Vui lòng đợi tác vụ hoàn tất trước khi bắt đầu tác vụ mới."
-            )
+            # Nếu cùng dự án gửi yêu cầu chạy lại thì tự động giải phóng slot cũ
+            if self.current_project_id == project_id:
+                self.release_slot()
+            else:
+                raise RuntimeError(
+                    f"TASK_ALREADY_RUNNING: Tác vụ '{self.current_task_name}' đang chiếm dụng GPU cho dự án '{self.current_project_id}'. "
+                    "Vui lòng đợi tác vụ hoàn tất trước khi bắt đầu tác vụ mới."
+                )
         self.current_task_name = task_name
         self.current_project_id = project_id
 
@@ -526,9 +530,41 @@ async def stream_step2_translate(
                 has_local_gguf = mt_models_dir.exists() and any(mt_models_dir.glob("*.gguf"))
                 llama_exe = ROOT_DIR / "bin" / "llama-server.exe"
 
+                # Tự động tải llama-server nếu thiếu
+                if has_local_gguf and not llama_exe.exists():
+                    from model_hub import ensure_llama_server
+                    yield {
+                        "event": "progress",
+                        "data": {
+                            "percent": 5,
+                            "stage": "Embedded LLM Engine",
+                            "synopsis": "Đang tự động chuẩn bị Portable LLaMA Server...",
+                        }
+                    }
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, ensure_llama_server)
+
                 if has_local_gguf and llama_exe.exists():
-                    gguf_files = sorted(mt_models_dir.glob("*.gguf"), key=lambda p: p.stat().st_size, reverse=True)
-                    chosen_gguf = gguf_files[0]
+                    all_ggufs = list(mt_models_dir.glob("*.gguf"))
+                    chosen_gguf = None
+                    if model_engine:
+                        m_lower = model_engine.lower()
+                        if "125" in m_lower or "1.25" in m_lower:
+                            matched = [g for g in all_ggufs if "1.25" in g.name.lower() or "125" in g.name.lower()]
+                            if matched:
+                                chosen_gguf = matched[0]
+                        elif "q4" in m_lower:
+                            matched = [g for g in all_ggufs if "q4" in g.name.lower()]
+                            if matched:
+                                chosen_gguf = matched[0]
+                        elif "q8" in m_lower:
+                            matched = [g for g in all_ggufs if "q8" in g.name.lower()]
+                            if matched:
+                                chosen_gguf = matched[0]
+
+                    if not chosen_gguf:
+                        gguf_files = sorted(all_ggufs, key=lambda p: p.stat().st_size, reverse=True)
+                        chosen_gguf = gguf_files[0]
                     yield {
                         "event": "progress",
                         "data": {

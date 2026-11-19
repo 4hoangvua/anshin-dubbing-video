@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Sparkles,
   Play,
@@ -7,11 +7,14 @@ import {
   Trash2,
   RefreshCw,
   Sliders,
-  Check
+  Check,
+  Download,
+  Loader2
 } from 'lucide-react'
 import { useProjectStore } from '../../stores/projectStore'
 import { useCueStore } from '../../stores/cueStore'
 import { usePlayerStore } from '../../stores/playerStore'
+import { useModelStore } from '../../stores/modelStore'
 import { useSSE } from '../../hooks/useSSE'
 import { VirtualCueTable } from '../virtual/VirtualCueTable'
 import { formatTime } from '../../lib/utils'
@@ -34,6 +37,14 @@ export const RecognitionStep: React.FC = () => {
   const seekTo = usePlayerStore((s) => s.seekTo)
   const setIsPlaying = usePlayerStore((s) => s.setIsPlaying)
 
+  const models = useModelStore((s) => s.models)
+  const recommendedIds = useModelStore((s) => s.recommended)
+  const downloadingModelId = useModelStore((s) => s.downloadingModelId)
+  const downloads = useModelStore((s) => s.downloads)
+  const downloadModel = useModelStore((s) => s.downloadModel)
+
+  const asrModels = useMemo(() => models.filter((m) => m.category === 'asr'), [models])
+
   const { isRunning, percent, stage, message, startStream, stopStream, error } = useSSE()
 
   // Local settings for Step 1
@@ -42,6 +53,28 @@ export const RecognitionStep: React.FC = () => {
   const [lang, setLang] = useState<string>(project?.settings.sourceLang || 'zh')
   const [vad, setVad] = useState<boolean>(true)
   const [showConfig, setShowConfig] = useState<boolean>(false)
+
+  // Tự động chọn model ASR đã tải sẵn
+  useEffect(() => {
+    if (asrModels.length > 0) {
+      const isCurDown = asrModels.some((m) => (m.id === `whisper-${model}` || m.id === model) && m.is_downloaded)
+      if (!isCurDown) {
+        const firstDown = asrModels.find((m) => m.is_downloaded)
+        if (firstDown) {
+          const nextModel = firstDown.id.replace('whisper-', '')
+          if (nextModel !== model) setModel(nextModel)
+        } else if (recommendedIds.asrModel) {
+          const nextModel = recommendedIds.asrModel.replace('whisper-', '')
+          if (nextModel !== model) setModel(nextModel)
+        }
+      }
+    }
+  }, [asrModels, recommendedIds.asrModel, model])
+
+  const currentAsrModel = asrModels.find((m) => m.id === `whisper-${model}` || m.id === model)
+  const isSelectedDownloaded = currentAsrModel?.is_downloaded ?? false
+  const isSelectedDownloading = currentAsrModel ? downloadingModelId === currentAsrModel.id : false
+  const selectedProgress = currentAsrModel ? downloads[currentAsrModel.id] : undefined
 
   // Split modal state
   const [splitTargetCue, setSplitTargetCue] = useState<CueItem | null>(null)
@@ -276,15 +309,32 @@ export const RecognitionStep: React.FC = () => {
             {isRunning ? (
               <button
                 onClick={stopStream}
-                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow transition"
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow transition cursor-pointer"
               >
                 <span>Dừng nhận diện</span>
+              </button>
+            ) : isSelectedDownloading ? (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 bg-indigo-950/80 border border-indigo-700/60 rounded text-xs text-indigo-300 font-semibold shadow">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                <span>Đang tải {selectedProgress?.percent || 0}% ({selectedProgress?.downloadedMb || 0} MB)...</span>
+              </div>
+            ) : mode === 'asr' && !isSelectedDownloaded && currentAsrModel ? (
+              <button
+                onClick={() => downloadModel(currentAsrModel.id)}
+                disabled={!!downloadingModelId}
+                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 active:bg-amber-700 disabled:opacity-50 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-amber-600/30 transition cursor-pointer"
+                title="Mô hình này chưa có trên máy. Bấm vào đây để tải trực tiếp 1-click!"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>
+                  {downloadingModelId ? 'Đang có model khác tải...' : `Tải Whisper ${model.toUpperCase()} (${currentAsrModel.size_mb} MB)`}
+                </span>
               </button>
             ) : (
               <button
                 onClick={handleStartRecognition}
                 disabled={!project}
-                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/30 transition"
+                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/30 transition cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Bắt đầu nhận diện</span>
@@ -303,11 +353,23 @@ export const RecognitionStep: React.FC = () => {
                 onChange={(e) => setModel(e.target.value)}
                 className="bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-slate-200"
               >
-                <option value="tiny">tiny (nhanh nhất)</option>
-                <option value="base">base</option>
-                <option value="small">small (tối ưu GTX 1060)</option>
-                <option value="medium">medium</option>
-                <option value="large-v3">large-v3</option>
+                {asrModels.length > 0 ? (
+                  asrModels.map((m) => {
+                    const shortCode = m.id.replace('whisper-', '')
+                    const isRec = recommendedIds.asrModel === m.id
+                    return (
+                      <option key={m.id} value={shortCode}>
+                        {m.is_downloaded ? '🟢 [Sẵn sàng]' : '☁️ [Chưa tải]'} {m.name} {isRec ? '⭐ Khuyên dùng' : ''} {!m.is_downloaded ? `(${m.size_mb} MB)` : ''}
+                      </option>
+                    )
+                  })
+                ) : (
+                  <>
+                    <option value="tiny">tiny (nhanh nhất)</option>
+                    <option value="small">small (tối ưu)</option>
+                    <option value="medium">medium</option>
+                  </>
+                )}
               </select>
             </div>
 

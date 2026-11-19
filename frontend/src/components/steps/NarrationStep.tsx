@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Mic,
   RefreshCw,
@@ -11,10 +11,13 @@ import {
   Sparkles,
   Clock,
   ShieldCheck,
-  X
+  X,
+  Download,
+  Loader2
 } from 'lucide-react'
 import { useProjectStore } from '../../stores/projectStore'
 import { useCueStore } from '../../stores/cueStore'
+import { useModelStore } from '../../stores/modelStore'
 import { useSSE } from '../../hooks/useSSE'
 import { VirtualCueTable } from '../virtual/VirtualCueTable'
 import { formatTime } from '../../lib/utils'
@@ -68,6 +71,17 @@ export const NarrationStep: React.FC = () => {
   const updateAudio = useCueStore((s) => s.updateAudio)
 
   const synthesizedCount = cues.filter((c) => !!c.audioFile).length
+
+  const models = useModelStore((s) => s.models)
+  const downloadingModelId = useModelStore((s) => s.downloadingModelId)
+  const downloads = useModelStore((s) => s.downloads)
+  const downloadModel = useModelStore((s) => s.downloadModel)
+
+  const ttsModel = useMemo(() => models.find((m) => m.category === 'tts'), [models])
+
+  const isTtsDownloaded = ttsModel ? ttsModel.is_downloaded : true
+  const isTtsDownloading = ttsModel ? downloadingModelId === ttsModel.id : false
+  const ttsProgress = ttsModel ? downloads[ttsModel.id] : undefined
 
   const { isRunning, percent, stage, message, startStream, stopStream, error } = useSSE()
 
@@ -469,15 +483,32 @@ export const NarrationStep: React.FC = () => {
             {isRunning ? (
               <button
                 onClick={stopStream}
-                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow transition"
+                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow transition cursor-pointer"
               >
                 <span>Dừng sinh giọng</span>
+              </button>
+            ) : isTtsDownloading ? (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 bg-indigo-950/80 border border-indigo-700/60 rounded text-xs text-indigo-300 font-semibold shadow">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                <span>Đang tải model TTS {ttsProgress?.percent || 0}% ({ttsProgress?.downloadedMb || 0} MB)...</span>
+              </div>
+            ) : ttsModel && !isTtsDownloaded ? (
+              <button
+                onClick={() => downloadModel(ttsModel.id)}
+                disabled={!!downloadingModelId}
+                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 active:bg-amber-700 disabled:opacity-50 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-amber-600/30 transition cursor-pointer"
+                title="Mô hình VieNeu-TTS chưa có trên máy. Bấm vào đây để tải trực tiếp 1-click!"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>
+                  {downloadingModelId ? 'Đang có model khác tải...' : `Tải VieNeu-TTS (${ttsModel.size_mb} MB)`}
+                </span>
               </button>
             ) : (
               <button
                 onClick={handleStartSynthesizeAll}
                 disabled={!project || cues.length === 0}
-                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/30 transition"
+                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/30 transition cursor-pointer"
                 title="Tạo giọng VieNeu-TTS toàn bộ và tự động sắp xếp timeline chống đè tiếng"
               >
                 <Mic className="w-3.5 h-3.5" />

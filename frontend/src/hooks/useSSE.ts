@@ -153,8 +153,11 @@ export function useSSE(): UseSSEReturn {
                 setStage('Hoàn tất')
                 callbacks?.onComplete?.(parsed)
               } else if (eventType === 'error') {
-                const errMsg = parsed.error?.message || parsed.message || 'Lỗi xử lý tác vụ'
-                throw new Error(errMsg)
+                const rawObj = parsed as Record<string, any>
+                const errMsg = rawObj.data?.message || rawObj.error?.message || rawObj.message || 'Lỗi xử lý tác vụ'
+                setError(errMsg)
+                callbacks?.onError?.(new Error(errMsg))
+                return
               }
             } catch (parseErr) {
               if (parseErr instanceof Error && parseErr.message !== 'Unexpected end of JSON input') {

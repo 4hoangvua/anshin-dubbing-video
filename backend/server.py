@@ -1127,10 +1127,10 @@ async def recommend_models():
     # Lựa chọn model theo tier
     if tier == "cpu":
         rec_asr = "whisper-tiny"
-        rec_mt = "hy-mt2-1.8b-q125"
+        rec_mt = "hy-mt2-1.8b-q4"
     elif tier == "recommended":
         rec_asr = "whisper-small"
-        rec_mt = "hy-mt2-1.8b-q8"
+        rec_mt = "hy-mt2-1.8b-q4"
     else:
         rec_asr = "whisper-medium"
         rec_mt = "hy-mt2-1.8b-q8"
