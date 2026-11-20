@@ -1,6 +1,6 @@
 /**
  * API Contract & Data Types for Video Dubbing Studio
- * Defined according to docs/API_CONTRACT.md
+ * Defined according to docs/API_CONTRACT.md and backend/schemas.py
  */
 
 export interface VideoInfo {
@@ -59,6 +59,22 @@ export interface SpeakerProfile {
   addressPronoun?: string;
 }
 
+export interface VoiceItem {
+  id: string;
+  name: string;
+  region: 'Bắc' | 'Trung' | 'Nam';
+  gender: 'female' | 'male';
+  style: string;
+  description: string;
+}
+
+export interface VoicesResponse {
+  voices: VoiceItem[];
+  defaultVoiceId: string;
+  maxSpeedRate: number;
+  minSpeedRate: number;
+}
+
 export interface CueItem {
   id: number;
   startTime: number;
@@ -79,6 +95,69 @@ export interface CueItem {
   isCollisionShifted?: boolean;
   status?: 'pending' | 'synthesizing' | 'ready' | 'error';
   recommendedTtsSpeedRate?: number;
+  style?: Partial<SubtitleStyle>;
+}
+
+export interface SubtitleStyle {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: 'normal' | 'bold';
+  fontStyle: 'normal' | 'italic';
+  textDecoration: 'none' | 'underline';
+  textColor: string;
+  strokeColor: string;
+  strokeWidth: number;
+  hasStroke: boolean;
+  shadowColor: string;
+  shadowBlur: number;
+  shadowOffsetX: number;
+  shadowOffsetY: number;
+  hasShadow: boolean;
+  backgroundColor: string;
+  backgroundOpacity: number;
+  backgroundPaddingX: number;
+  backgroundPaddingY: number;
+  backgroundBorderRadius: number;
+  hasBackground: boolean;
+  textAlign: 'left' | 'center' | 'right';
+  boxWidth: number; // % width of video container (30-95%)
+  position: { x: number; y: number }; // Offset pixel from center of video (0,0 is center)
+}
+
+export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
+  fontFamily: 'Roboto',
+  fontSize: 18,
+  fontWeight: 'bold',
+  fontStyle: 'normal',
+  textDecoration: 'none',
+  textColor: '#ffffff',
+  strokeColor: '#000000',
+  strokeWidth: 2,
+  hasStroke: true,
+  shadowColor: 'rgba(0, 0, 0, 0.75)',
+  shadowBlur: 3,
+  shadowOffsetX: 1,
+  shadowOffsetY: 1,
+  hasShadow: true,
+  backgroundColor: '#000000',
+  backgroundOpacity: 0.65,
+  backgroundPaddingX: 8,
+  backgroundPaddingY: 4,
+  backgroundBorderRadius: 4,
+  hasBackground: false,
+  textAlign: 'center',
+  boxWidth: 80,
+  position: { x: 0, y: 150 },
+};
+
+export interface VideoClipSegment {
+  id: string;
+  startTime: number;
+  duration: number;
+  trimStart: number;
+  trimEnd: number;
+  volume: number;
+  muted: boolean;
 }
 
 export interface ExportInfo {
@@ -121,6 +200,17 @@ export interface HealthStatus {
   };
 }
 
+export interface ErrorDetail {
+  code: string;
+  message: string;
+  step?: number;
+  details?: Record<string, unknown>;
+}
+
+export interface RFC7807Error {
+  error: ErrorDetail;
+}
+
 export interface SSEProgressEvent {
   step?: number;
   task?: string;
@@ -145,12 +235,7 @@ export interface SSEProgressEvent {
   outputVideoUrl?: string;
   fileSizeBytes?: number;
   durationSec?: number;
-  error?: {
-    code: string;
-    message: string;
-    step?: number;
-    details?: Record<string, unknown>;
-  };
+  error?: ErrorDetail;
 }
 
 export interface Step1RecognizeRequest {
@@ -174,6 +259,7 @@ export interface Step2TranslateRequest {
   tgtLang: string;
   reconstruct?: boolean;
   stylePrompt?: string;
+  modelEngine?: string;
 }
 
 export interface Step2TranslateSingleRequest {
@@ -183,6 +269,7 @@ export interface Step2TranslateSingleRequest {
   targetLang: string;
   persona?: string;
   customInstruction?: string;
+  modelEngine?: string;
 }
 
 export interface Step2TranslateSingleResponse {
@@ -198,6 +285,7 @@ export interface Step3SynthesizeRequest {
   autoMatchDuration?: boolean;
   borrowGap?: boolean;
   speed?: number;
+  speakers?: SpeakerProfile[];
 }
 
 export interface Step3SynthesizeSingleRequest {
@@ -216,6 +304,13 @@ export interface Step3SynthesizeSingleResponse {
   synthesisTimeSec?: number;
 }
 
+export interface Step3SyncSubtitlesResponse {
+  success: boolean;
+  syncedCount: number;
+  cues: CueItem[];
+  message: string;
+}
+
 export interface Step4ExportRequest {
   projectId: string;
   autoDucking?: boolean;
@@ -224,7 +319,7 @@ export interface Step4ExportRequest {
   duckReleaseMs?: number;
   sourceVolumeDb?: number;
   ttsVolumeDb?: number;
-  exportSubtitleType?: 'soft' | 'hard';
+  exportSubtitleType?: 'soft' | 'hard' | 'none';
   resolution?: string;
   videoCodec?: string;
 }
@@ -262,17 +357,51 @@ export interface HardwareInfo {
   suggested_tier: 'cpu' | 'recommended' | 'high';
 }
 
+export interface HardwareRecommendation {
+  tier?: string;
+  asrModel?: string;
+  mtModel?: string;
+  ttsModel?: string;
+}
+
 export interface ModelRecommendationsResponse {
   hardware: HardwareInfo;
-  recommended: {
-    tier: 'cpu' | 'recommended' | 'high';
-    asrModel: string;
-    mtModel: string;
-    ttsModel: string;
-  };
+  recommended: HardwareRecommendation;
 }
 
 export interface ModelStatusResponse {
   hardware: HardwareInfo;
   models: ModelItem[];
+}
+
+// Timeline & Workspace Types
+export type TimelineTool = 'select' | 'split' | 'slip';
+
+export interface TrackConfig {
+  id: 'video' | 'original-audio' | 'cues' | 'tts-audio';
+  name: string;
+  height: number;
+  visible: boolean;
+  locked: boolean;
+  muted?: boolean;
+  volume?: number; // 0.0 to 2.0 (default 1.0)
+}
+
+// UI State Types
+export type ThemeMode = 'dark' | 'light';
+
+export interface ToastMessage {
+  id: string;
+  type: 'success' | 'info' | 'warning' | 'error';
+  title: string;
+  description?: string;
+  durationMs?: number;
+}
+
+export interface BannerNotice {
+  id: string;
+  type: 'warning' | 'error' | 'info';
+  message: string;
+  actionText?: string;
+  onAction?: () => void;
 }

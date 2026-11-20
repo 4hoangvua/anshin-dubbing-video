@@ -36,6 +36,28 @@ except ImportError:
     HAS_LOCAL_VIENEU = False
 
 
+def normalize_voice_name(voice: str) -> str:
+    """Chuẩn hóa tên giọng đọc theo danh mục VieNeu-TTS (lemyloi spec)."""
+    if not voice:
+        return "Mai Anh"
+    v = voice.lower().strip()
+    if any(k in v for k in ["minh duc", "minh đức", "nam minh", "minh", "duc", "đức"]):
+        return "Minh Đức"
+    if any(k in v for k in ["ngoc huyen", "ngọc huyền", "huyen", "huyền"]):
+        return "Ngọc Huyền"
+    if any(k in v for k in ["thai son", "thái sơn", "son", "sơn"]):
+        return "Thái Sơn"
+    if any(k in v for k in ["xuan vinh", "xuân vĩnh", "vinh", "vĩnh"]):
+        return "Xuân Vĩnh"
+    if any(k in v for k in ["doan trang", "đoan trang", "trang"]):
+        return "Đoan Trang"
+    if any(k in v for k in ["truc ly", "trúc ly", "ly"]):
+        return "Trúc Ly"
+    if any(k in v for k in ["thanh binh", "thanh bình", "binh", "bình"]):
+        return "Thanh Bình"
+    return "Mai Anh"
+
+
 class VieNeuEngine:
     """Lớp bọc điều khiển VieNeu-TTS hỗ trợ cả On-Device (v3-Turbo) và Cloud API (v4)."""
 
@@ -128,9 +150,11 @@ class VieNeuEngine:
         if not clean_text:
             return np.zeros(int(self.sample_rate * 0.2), dtype=np.float32)
 
+        v_name = normalize_voice_name(voice)
+
         # 1. Chế độ Cloud VieNeu v4 (nếu cấu hình)
         if self.engine_type in ("v4", "v4-cloud", "cloud"):
-            return self._synthesize_cloud_v4(clean_text, voice=voice, speed=speed)
+            return self._synthesize_cloud_v4(clean_text, voice=v_name, speed=speed)
 
         # 2. Chế độ On-Device Local v3 Turbo (mặc định)
         if self._local_tts is None:
@@ -141,7 +165,7 @@ class VieNeuEngine:
             wav = self._local_tts.infer(clean_text, ref_audio=ref_audio)
         else:
             # Dùng giọng đọc mẫu có sẵn
-            wav = self._local_tts.infer(clean_text, voice=voice)
+            wav = self._local_tts.infer(clean_text, voice=v_name)
 
         wav = np.asarray(wav, dtype=np.float32)
 

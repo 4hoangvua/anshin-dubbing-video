@@ -35,7 +35,7 @@ class ProjectSettings(BaseModel):
     borrowGap: bool = Field(True, description="Mượn khoảng lặng giữa các câu")
     maxGapBorrowRatio: float = Field(0.85, description="Tỉ lệ khoảng lặng tối đa được phép mượn")
     maxBorrowSeconds: float = Field(3.5, description="Thời gian mượn tối đa cho 1 câu (giây)")
-    autoDucking: bool = Field(True, description="Bật tự động Audio Ducking cho nhạc nền")
+    autoDucking: bool = Field(False, description="Bật tự động Audio Ducking cho nhạc nền")
     duckingVolume: float = Field(0.15, description="Hệ số âm lượng BGM khi bị duck (0.15 = -16.5 dB)")
     duckAttackMs: int = Field(150, description="Thời gian vuốt nhỏ dần (ms)")
     duckReleaseMs: int = Field(400, description="Thời gian phục hồi âm lượng (ms)")
@@ -289,7 +289,7 @@ class Step3TimingOffsetResponse(BaseModel):
 # 4.12 POST /api/step4/export
 class Step4ExportRequest(BaseModel):
     projectId: str
-    autoDucking: bool = Field(True, description="Tự động ducking nhạc nền")
+    autoDucking: bool = Field(False, description="Tự động ducking nhạc nền")
     duckingVolume: float = Field(0.15, description="Hệ số âm lượng khi duck")
     duckAttackMs: int = Field(150, description="Attack ms")
     duckReleaseMs: int = Field(400, description="Release ms")

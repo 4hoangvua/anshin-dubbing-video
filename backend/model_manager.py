@@ -340,6 +340,7 @@ async def stream_step1_recognize(
                     "--no-gui",
                     "--roi", roi_str,
                     "--lang", lang if lang else "zh",
+                    "-o", str(out_json),
                 ]
 
             # Thiết lập môi trường tối ưu PyTorch CUDA
@@ -1059,16 +1060,20 @@ async def stream_step3_synthesize(
                 rate, final_d, needs_rev = calculate_playback_rate(
                     audio_dur, target_dur, auto_match_duration=auto_match_duration
                 )
+                item_speed = float(item.get("speed", 1.0))
+                effective_speed = item_speed if abs(item_speed - 1.0) >= 0.02 else rate
 
-                final_cues_output.append({
+                base_cue = dict(matched_cue) if matched_cue else {"id": cid}
+                base_cue.update({
                     "id": cid,
                     "audioFile": clip_path,
                     "audioDuration": audio_dur,
-                    "speed": item.get("speed", speed),
-                    "playbackRate": rate,
-                    "needsReview": needs_rev,
+                    "speed": effective_speed,
+                    "playbackRate": effective_speed,
+                    "needsReview": effective_speed > 1.35,
                     "status": "ready",
                 })
+                final_cues_output.append(base_cue)
 
             yield {
                 "event": "complete",

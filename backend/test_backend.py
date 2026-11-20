@@ -198,6 +198,65 @@ def test_api_endpoints():
             dummy_wav.unlink()
 
 
+def test_gpu_status_and_surrogates():
+    from utils.subprocess_runner import clean_surrogates, get_gpu_vram_status
+    client = TestClient(app)
+
+    # Test surrogate cleaning with chr(0xD800)
+    bad_char = chr(0xD800)
+    bad_str = "Xin chào " + bad_char + " thế giới lỗi!"
+    cleaned = clean_surrogates(bad_str)
+    assert bad_char not in cleaned
+    assert "Xin chào  thế giới lỗi!" == cleaned
+
+    # Test API endpoint
+    res = client.get("/api/system/gpu-status")
+    assert res.status_code == 200
+    data = res.json()
+    assert "available" in data
+    assert "isSlotLocked" in data
+    print(f"[✓] GET /api/system/gpu-status: PASSED ({data['deviceName']}, free: {data['freeMb']} MB)")
+
+
+def test_waveform_endpoint():
+    import wave
+    import numpy as np
+
+    client = TestClient(app)
+    test_wav = Path(__file__).parent / "test_waveform_sample.wav"
+    try:
+        with wave.open(str(test_wav), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            t = np.linspace(0, 1, 16000, False)
+            audio = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+            wf.writeframes(audio.tobytes())
+
+        res = client.get(f"/api/media/waveform?path={test_wav.as_posix()}&points_per_second=20")
+        assert res.status_code == 200
+        data = res.json()
+        assert "peaks" in data
+        assert len(data["peaks"]) > 0
+        assert data["pointsPerSecond"] == 20
+        assert data["duration"] == 1.0
+        print(f"[✓] GET /api/media/waveform: PASSED ({len(data['peaks'])} points)")
+    finally:
+        if test_wav.exists():
+            test_wav.unlink()
+        cache = Path(__file__).parent / "test_waveform_sample_waveform.json"
+        if cache.exists():
+            cache.unlink()
+
+
+def test_filmstrip_endpoint():
+    client = TestClient(app)
+    # Test 404 on non-existent file
+    res = client.get("/api/media/filmstrip?path=non_existent_video.mp4")
+    assert res.status_code == 404
+    print("[✓] GET /api/media/filmstrip (404 guard): PASSED")
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("RUNNING BACKEND TEST SUITE")
@@ -206,6 +265,9 @@ if __name__ == "__main__":
     test_borrow_gap_algorithm()
     test_playback_rate()
     test_ducking_envelope()
+    test_gpu_status_and_surrogates()
+    test_waveform_endpoint()
+    test_filmstrip_endpoint()
     test_api_endpoints()
     print("=" * 60)
     print("ALL TESTS PASSED SUCCESSFULLY! 🚀")

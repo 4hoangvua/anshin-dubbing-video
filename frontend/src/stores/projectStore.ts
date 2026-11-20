@@ -1,30 +1,33 @@
-import { create } from 'zustand'
-import type { Project, DubbingSettings, SpeakerProfile, ExportInfo, HealthStatus } from '../types'
-import { useCueStore } from './cueStore'
+import { create } from 'zustand';
+import type { Project, DubbingSettings, SpeakerProfile, ExportInfo, HealthStatus } from '../types';
+import { apiClient } from '../core/apiClient';
+import { useCueStore } from './cueStore';
+import { useTimelineStore } from './timelineStore';
+import { usePlayerStore } from './playerStore';
 
 interface ProjectState {
-  project: Project | null
-  activeStep: number
-  backendConnected: boolean
-  gpuInfo: HealthStatus['system'] | null
-  isLoading: boolean
-  isSaving: boolean
-  lastSavedAt: string | null
-  error: string | null
+  project: Project | null;
+  activeStep: 1 | 2 | 3 | 4;
+  backendConnected: boolean;
+  gpuInfo: HealthStatus['system'] | null;
+  isLoading: boolean;
+  isSaving: boolean;
+  lastSavedAt: string | null;
+  error: string | null;
 
   // Actions
-  setProject: (project: Project | null) => void
-  setActiveStep: (step: number) => void
-  setBackendConnected: (connected: boolean) => void
-  setGpuInfo: (info: HealthStatus['system'] | null) => void
-  updateSettings: (settings: Partial<DubbingSettings>) => void
-  addSpeaker: (speaker: SpeakerProfile) => void
-  updateSpeaker: (speakerId: string, updates: Partial<SpeakerProfile>) => void
-  removeSpeaker: (speakerId: string) => void
-  setExportInfo: (info: ExportInfo) => void
-  loadProject: (projectId: string) => Promise<boolean>
-  saveProject: () => Promise<boolean>
-  checkHealth: () => Promise<boolean>
+  setProject: (project: Project | null) => void;
+  setActiveStep: (step: 1 | 2 | 3 | 4) => void;
+  setBackendConnected: (connected: boolean) => void;
+  setGpuInfo: (info: HealthStatus['system'] | null) => void;
+  updateSettings: (settings: Partial<DubbingSettings>) => void;
+  addSpeaker: (speaker: SpeakerProfile) => void;
+  updateSpeaker: (speakerId: string, updates: Partial<SpeakerProfile>) => void;
+  removeSpeaker: (speakerId: string) => void;
+  setExportInfo: (info: ExportInfo) => void;
+  loadProject: (projectId: string) => Promise<boolean>;
+  saveProject: () => Promise<boolean>;
+  checkHealth: () => Promise<boolean>;
 }
 
 export const DEFAULT_SETTINGS: DubbingSettings = {
@@ -40,7 +43,7 @@ export const DEFAULT_SETTINGS: DubbingSettings = {
   borrowGap: true,
   maxGapBorrowRatio: 0.85,
   maxBorrowSeconds: 3.5,
-  autoDucking: true,
+  autoDucking: false,
   duckingVolume: 0.15,
   duckAttackMs: 150,
   duckReleaseMs: 400,
@@ -48,8 +51,8 @@ export const DEFAULT_SETTINGS: DubbingSettings = {
   ttsVolumeDb: 0.0,
   exportSubtitleType: 'soft',
   videoCodec: 'h264_nvenc',
-  resolution: 'original'
-}
+  resolution: 'original',
+};
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
   project: null,
@@ -62,177 +65,152 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   error: null,
 
   setProject: (project) => {
-    set({
-      project,
-      activeStep: project?.currentStep || 1
-    })
-    if (project?.projectId) {
-      try {
-        localStorage.setItem('last_project_id', project.projectId)
-      } catch {}
+    set({ project });
+    if (project?.cues) {
+      useCueStore.getState().setCues(project.cues, false);
     }
-    if (project?.cues && Array.isArray(project.cues)) {
-      useCueStore.getState().setCues(project.cues)
+    // Deselect any previous active element
+    useCueStore.getState().setSelectedCueId(null);
+    useTimelineStore.getState().setSelectedElement(null);
+
+    const dur = project?.videoInfo?.duration || 0;
+    if (dur > 0) {
+      usePlayerStore.getState().setDuration(dur);
+      useTimelineStore.getState().setVideoClips([
+        {
+          id: 'video_clip_0',
+          startTime: 0,
+          duration: dur,
+          trimStart: 0,
+          trimEnd: 0,
+          volume: 1.0,
+          muted: false,
+        },
+      ]);
+    } else {
+      useTimelineStore.getState().setVideoClips([]);
     }
   },
 
-  setActiveStep: (step) => {
-    const { project, saveProject } = get()
-    set({ activeStep: step })
-    if (project) {
-      set({ project: { ...project, currentStep: step } })
-      // Auto-save ngầm khi chuyển bước để bảo vệ 100% dữ liệu
-      saveProject().catch((e) => console.warn('Auto-save failed:', e))
-    }
-  },
-
+  setActiveStep: (activeStep) => set({ activeStep }),
   setBackendConnected: (backendConnected) => set({ backendConnected }),
   setGpuInfo: (gpuInfo) => set({ gpuInfo }),
 
   updateSettings: (newSettings) => {
-    const { project } = get()
-    if (!project) return
-    const updatedSettings = { ...project.settings, ...newSettings }
+    const { project } = get();
+    if (!project) return;
     set({
       project: {
         ...project,
-        settings: updatedSettings,
-        updatedAt: new Date().toISOString()
-      }
-    })
+        settings: { ...project.settings, ...newSettings },
+      },
+    });
   },
 
   addSpeaker: (speaker) => {
-    const { project } = get()
-    if (!project) return
+    const { project } = get();
+    if (!project) return;
+    if (project.speakers.some((s) => s.id === speaker.id)) return;
     set({
       project: {
         ...project,
         speakers: [...project.speakers, speaker],
-        updatedAt: new Date().toISOString()
-      }
-    })
+      },
+    });
   },
 
   updateSpeaker: (speakerId, updates) => {
-    const { project } = get()
-    if (!project) return
-    const updatedSpeakers = project.speakers.map((s) =>
-      s.id === speakerId ? { ...s, ...updates } : s
-    )
+    const { project } = get();
+    if (!project) return;
     set({
       project: {
         ...project,
-        speakers: updatedSpeakers,
-        updatedAt: new Date().toISOString()
-      }
-    })
+        speakers: project.speakers.map((s) => (s.id === speakerId ? { ...s, ...updates } : s)),
+      },
+    });
   },
 
   removeSpeaker: (speakerId) => {
-    const { project } = get()
-    if (!project) return
+    const { project } = get();
+    if (!project) return;
     set({
       project: {
         ...project,
         speakers: project.speakers.filter((s) => s.id !== speakerId),
-        updatedAt: new Date().toISOString()
-      }
-    })
+      },
+    });
   },
 
   setExportInfo: (exportInfo) => {
-    const { project } = get()
-    if (!project) return
+    const { project } = get();
+    if (!project) return;
     set({
-      project: {
-        ...project,
-        exportInfo,
-        updatedAt: new Date().toISOString()
-      }
-    })
-  },
-
-  checkHealth: async () => {
-    try {
-      const res = await fetch('/api/health')
-      if (res.ok) {
-        const data: HealthStatus = await res.json()
-        set({
-          backendConnected: true,
-          gpuInfo: data.system
-        })
-        return true
-      }
-      set({ backendConnected: false })
-      return false
-    } catch {
-      set({ backendConnected: false })
-      return false
-    }
+      project: { ...project, exportInfo },
+    });
   },
 
   loadProject: async (projectId: string) => {
-    set({ isLoading: true, error: null })
+    set({ isLoading: true, error: null });
     try {
-      const res = await fetch(`/api/project/load?projectId=${encodeURIComponent(projectId)}`)
-      if (!res.ok) {
-        throw new Error(`Tải dự án thất bại: HTTP ${res.status}`)
-      }
-      const data: Project = await res.json()
-      set({
-        project: data,
-        activeStep: data.currentStep || 1,
-        isLoading: false
-      })
-      try {
-        localStorage.setItem('last_project_id', data.projectId)
-      } catch {}
-      if (data.cues && Array.isArray(data.cues)) {
-        useCueStore.getState().setCues(data.cues)
-      }
-      return true
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Lỗi không xác định khi tải dự án'
-      set({ error: msg, isLoading: false })
-      return false
+      const data = await apiClient.get<Project>(`/api/project/load?projectId=${encodeURIComponent(projectId.trim())}`);
+      get().setProject(data);
+      set({ activeStep: (data.currentStep as 1 | 2 | 3 | 4) || 1 });
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Không thể tải dự án';
+      set({ error: message });
+      return false;
+    } finally {
+      set({ isLoading: false });
     }
   },
 
   saveProject: async () => {
-    const { project } = get()
-    if (!project) return false
-    set({ isSaving: true })
-    try {
-      // Luôn đồng bộ danh sách cues mới nhất từ cueStore (nơi lưu các cập nhật dịch thuật, timing...)
-      const currentCues = useCueStore.getState().cues
-      const projectToSave = {
-        ...project,
-        cues: currentCues.length > 0 ? currentCues : project.cues
-      }
-      set({ project: projectToSave })
+    const { project } = get();
+    if (!project) return false;
 
-      const res = await fetch('/api/project/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: projectToSave.projectId,
-          project: projectToSave
-        })
-      })
-      if (!res.ok) {
-        throw new Error(`Lưu dự án thất bại: HTTP ${res.status}`)
+    set({ isSaving: true, error: null });
+    try {
+      const currentCues = useCueStore.getState().cues;
+      const payload: Project = {
+        ...project,
+        cues: currentCues,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const res = await apiClient.post<{ success: boolean; updatedAt: string }>('/api/project/save', {
+        projectId: project.projectId,
+        project: payload,
+      });
+
+      if (res.success) {
+        set({
+          project: payload,
+          lastSavedAt: res.updatedAt || new Date().toISOString(),
+        });
+        return true;
       }
-      const data = await res.json()
-      set({
-        isSaving: false,
-        lastSavedAt: data.updatedAt || new Date().toISOString()
-      })
-      return true
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Lỗi không xác định khi lưu dự án'
-      set({ error: msg, isSaving: false })
-      return false
+      return false;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Lỗi khi lưu dự án';
+      set({ error: message });
+      return false;
+    } finally {
+      set({ isSaving: false });
     }
-  }
-}))
+  },
+
+  checkHealth: async () => {
+    try {
+      const data = await apiClient.get<HealthStatus>('/api/health');
+      set({
+        backendConnected: true,
+        gpuInfo: data.system || null,
+      });
+      return true;
+    } catch {
+      set({ backendConnected: false, gpuInfo: null });
+      return false;
+    }
+  },
+}));

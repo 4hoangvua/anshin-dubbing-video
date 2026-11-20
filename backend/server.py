@@ -20,18 +20,24 @@ if sys.platform == "win32":
 
 from datetime import datetime, timezone
 import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
+import re
 import shutil
+import subprocess
 import sys
+import urllib.parse
 import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional
+
+logger = logging.getLogger("server")
 
 import aiofiles
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from schemas import (
     CueItem,
@@ -206,6 +212,16 @@ async def check_health():
             "tts": ModuleStatus(available=tts_ok, path=str(MODULES_DIR / "tts")),
         },
     )
+
+
+@app.get("/api/system/gpu-status")
+async def get_system_gpu_status():
+    """Giám sát bộ nhớ GPU VRAM và trạng thái khóa đơn nhiệm Single-Active Engine."""
+    from utils.subprocess_runner import get_gpu_vram_status
+    vram = get_gpu_vram_status()
+    vram["isSlotLocked"] = bool(manager.is_busy)
+    vram["currentSlot"] = manager.current_task_name
+    return vram
 
 
 # ==============================================================================
@@ -531,6 +547,145 @@ async def stream_media(request: Request, path: str = Query(..., description="Đ�
     return StreamingResponse(partial_sender(start, content_length), status_code=206, headers=headers)
 
 
+@app.get("/api/media/waveform")
+async def get_media_waveform(path: str = Query(..., description="Đường dẫn file media"), points_per_second: int = 50):
+    """
+    Trích xuất và trả về danh sách đỉnh biên độ sóng âm (Audio Waveform Peaks).
+    Được chuẩn hóa từ 0.0 đến 1.0 cho hiển thị trực quan 60 FPS trên Timeline.
+    """
+    file_path = Path(path).resolve()
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy tệp media tại: {path}",
+        )
+
+    cache_file = file_path.parent / f"{file_path.stem}_waveform.json"
+    if cache_file.exists():
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    import wave
+    import numpy as np
+
+    peaks: List[float] = []
+    duration = 0.0
+    try:
+        if file_path.suffix.lower() == ".wav":
+            with wave.open(str(file_path), "rb") as wf:
+                sr = wf.getframerate()
+                n_frames = wf.getnframes()
+                duration = round(n_frames / sr, 2)
+                channels = wf.getnchannels()
+                sampwidth = wf.getsampwidth()
+                raw = wf.readframes(n_frames)
+
+                dtype = np.int16 if sampwidth == 2 else (np.int32 if sampwidth == 4 else np.uint8)
+                audio_data = np.frombuffer(raw, dtype=dtype)
+                if channels > 1:
+                    audio_data = audio_data[::channels]
+
+                norm_data = np.abs(audio_data.astype(np.float32) / (np.iinfo(dtype).max or 1.0))
+                chunk_size = max(1, int(sr / points_per_second))
+                n_chunks = len(norm_data) // chunk_size
+                if n_chunks > 0:
+                    truncated = norm_data[:n_chunks * chunk_size].reshape(n_chunks, chunk_size)
+                    chunk_peaks = np.max(truncated, axis=1)
+                    peaks = [round(float(p), 3) for p in chunk_peaks]
+    except Exception:
+        pass
+
+    if not peaks:
+        peaks = [0.15] * max(10, int(duration * points_per_second))
+
+    result = {
+        "duration": duration,
+        "pointsPerSecond": points_per_second,
+        "peaks": peaks,
+    }
+
+    try:
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(result, f)
+    except Exception:
+        pass
+
+    return result
+
+
+@app.get("/api/media/filmstrip")
+async def get_media_filmstrip(
+    path: str = Query(..., description="Đường dẫn file video"),
+    interval: float = Query(2.0, description="Khoảng cách giữa các frame (giây)"),
+    thumb_height: int = Query(60, description="Chiều cao thumbnail"),
+):
+    """
+    Trích xuất và trả về danh sách filmstrip thumbnails từ video sử dụng FFmpeg.
+    Lưu vào thư mục cache filmstrip để tái sử dụng nhanh chóng cho 60 FPS Timeline.
+    """
+    file_path = Path(path).resolve()
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Không tìm thấy tệp video tại: {path}",
+        )
+
+    if file_path.stat().st_size == 0:
+        return {"interval": interval, "count": 0, "thumbnails": []}
+
+    # Thư mục cache filmstrip
+    film_dir = file_path.parent / f"{file_path.stem}_filmstrip"
+    film_dir.mkdir(parents=True, exist_ok=True)
+    manifest_file = film_dir / "manifest.json"
+
+    if manifest_file.exists():
+        try:
+            with open(manifest_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    # Chạy FFmpeg trích xuất thumbnails nếu chưa có
+    pattern = str(film_dir / "frame_%04d.jpg")
+    cmd = [
+        "ffmpeg", "-y", "-ss", "0", "-i", str(file_path),
+        "-vf", f"fps=1/{max(0.5, interval)},scale=-1:{thumb_height}",
+        "-q:v", "4",
+        pattern,
+    ]
+    try:
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    except Exception as e:
+        logger.warning(f"Lỗi khi trích xuất filmstrip thumbnails bằng FFmpeg: {e}")
+
+    # Thu thập các frame đã xuất
+    frames = sorted(list(film_dir.glob("frame_*.jpg")))
+    thumbnails = []
+    for idx, frame_path in enumerate(frames):
+        thumbnails.append({
+            "time": round(idx * interval, 2),
+            "path": str(frame_path),
+            "url": f"/api/media/stream?path={urllib.parse.quote(str(frame_path))}",
+        })
+
+    result = {
+        "interval": interval,
+        "count": len(thumbnails),
+        "thumbnails": thumbnails,
+    }
+
+    try:
+        with open(manifest_file, "w", encoding="utf-8") as f:
+            json.dump(result, f)
+    except Exception:
+        pass
+
+    return result
+
+
 # ==============================================================================
 # 4.6. POST /api/step1/recognize (SSE STREAMING)
 # ==============================================================================
@@ -654,6 +809,23 @@ async def translate_step2(req: Step2TranslateRequest):
 
     cues_data = [c.model_dump() for c in project.cues]
 
+    # Tự động trích xuất cấu hình đại từ xưng hô của nhân vật làm ngữ cảnh dịch (Speaker Context)
+    speaker_prompts = []
+    for spk in project.speakers:
+        parts = []
+        if spk.name:
+            parts.append(f"Nhân vật '{spk.name}' ({spk.id})")
+        if spk.selfPronoun:
+            parts.append(f"tự xưng là '{spk.selfPronoun}'")
+        if spk.addressPronoun:
+            parts.append(f"gọi đối phương là '{spk.addressPronoun}'")
+        if len(parts) > 1:
+            speaker_prompts.append(", ".join(parts))
+
+    effective_style_prompt = req.stylePrompt
+    if speaker_prompts and not effective_style_prompt:
+        effective_style_prompt = "Quy tắc xưng hô nhân vật: " + "; ".join(speaker_prompts)
+
     async def event_generator():
         async for sse_event in stream_step2_translate(
             project_id=req.projectId,
@@ -664,7 +836,7 @@ async def translate_step2(req: Step2TranslateRequest):
             src_lang=req.srcLang,
             tgt_lang=req.tgtLang,
             reconstruct=req.reconstruct,
-            style_prompt=req.stylePrompt,
+            style_prompt=effective_style_prompt,
             model_engine=req.modelEngine,
         ):
             # Cập nhật bản dịch vào project.json khi hoàn thành
@@ -760,6 +932,49 @@ async def get_preset_voices():
     )
 
 
+VOICE_SAMPLES_DIR = Path(__file__).resolve().parent / "data" / "voice_samples"
+VOICE_SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.get("/api/tts/voice-sample")
+async def get_voice_sample(voiceId: str = Query(..., description="Tên giọng đọc VieNeu")):
+    """Trả về file âm thanh nghe thử giọng đọc VieNeu-TTS."""
+    clean_voice = voiceId.strip()
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', clean_voice)
+    sample_path = VOICE_SAMPLES_DIR / f"{safe_name}.wav"
+
+    if not sample_path.exists():
+        sample_text = f"Xin chào, đây là giọng đọc {clean_voice} trên hệ thống lồng tiếng."
+        loop = asyncio.get_running_loop()
+
+        def _gen():
+            import sys
+            tts_mod_dir = MODULES_DIR / "tts"
+            if str(tts_mod_dir) not in sys.path:
+                sys.path.insert(0, str(tts_mod_dir))
+            from vieneu_engine import VieNeuEngine
+            import soundfile as sf
+
+            engine = VieNeuEngine(engine_type="local", device="cpu")
+            wav = engine.synthesize(sample_text, voice=clean_voice, speed=1.0)
+            sf.write(str(sample_path), wav, engine.sample_rate)
+
+        try:
+            await loop.run_in_executor(manager.executor, _gen)
+        except Exception as e:
+            logger.error(f"Lỗi tạo voice sample cho {clean_voice}: {e}")
+            raise HTTPException(status_code=500, detail=f"Không thể tạo mẫu giọng đọc: {e}")
+
+    if not sample_path.exists():
+        raise HTTPException(status_code=404, detail="Không tìm thấy mẫu giọng đọc.")
+
+    return FileResponse(
+        str(sample_path),
+        media_type="audio/wav",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 # ==============================================================================
 # 4.10. POST /api/step3/synthesize (SSE STREAMING)
 # ==============================================================================
@@ -838,6 +1053,8 @@ async def synthesize_step3(req: Step3SynthesizeRequest):
                         orig.needsReview = sc.get("needsReview", False)
                         orig.status = "ready"
                 save_project_state(project)
+                if "data" in sse_event and isinstance(sse_event["data"], dict):
+                    sse_event["data"]["cues"] = [c.model_dump() for c in project.cues]
 
             yield sse_event
 
@@ -1038,14 +1255,17 @@ async def export_step4(req: Step4ExportRequest):
         mixed_wav = export_dir / "mixed_audio.wav"
         narration_wav = export_dir / "narration_track.wav"
 
+        effective_duck_windows = duck_wins if req.autoDucking else []
+        effective_duck_volume = req.duckingVolume if req.autoDucking else 1.0
+
         mix_audio_with_ducking(
             bgm_path=str(bgm_wav),
             narration_audio=timeline,
-            duck_windows=duck_wins,
+            duck_windows=effective_duck_windows,
             output_mixed_path=str(mixed_wav),
             output_narration_path=str(narration_wav),
             sample_rate=sample_rate,
-            duck_volume=req.duckingVolume,
+            duck_volume=effective_duck_volume,
             attack_ms=req.duckAttackMs,
             release_ms=req.duckReleaseMs,
             bgm_gain_db=req.sourceVolumeDb,

@@ -24,7 +24,7 @@ export const ExportStep: React.FC = () => {
 
   // Local export settings
   const [autoDucking, setAutoDucking] = useState<boolean>(
-    project?.settings.autoDucking ?? true
+    project?.settings.autoDucking ?? false
   )
   const [duckingVolume, setDuckingVolume] = useState<number>(
     project?.settings.duckingVolume ?? 0.15

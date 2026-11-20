@@ -1,15 +1,16 @@
-# Backend Architecture & Implementation Rules for Dubbing Video
+# Backend Architecture & Implementation Rules for Dubbing Video Core
 
-## 1. Server Configuration & Threading
-- **Host & Port:** FastAPI chạy cục bộ tại `127.0.0.1:8765`.
-- **CORS:** Kích hoạt CORS cho phép các origin cục bộ (`http://localhost:5173`, `http://tauri.localhost`, `tauri://localhost`).
-- **GPU Queue Management:**
-  - Bắt buộc dùng `concurrent.futures.ThreadPoolExecutor(max_workers=1)` cho mọi tác vụ gọi AI/GPU.
-  - Tuyệt đối không cho phép 2 tác vụ AI chạy song song trên GPU (NVIDIA GTX 1060 6GB VRAM có giới hạn).
+## 1. Cấu hình Server & Điều phối GPU (Single-Active Engine)
+- **Host & Port**: FastAPI chạy cục bộ tại `127.0.0.1:8765`.
+- **CORS**: Cho phép các origin cục bộ: `http://localhost:5173`, `http://127.0.0.1:5173`, `http://tauri.localhost`, `tauri://localhost`.
+- **GPU Queue Scheduler & Deadlock Prevention**:
+  - Dùng `concurrent.futures.ThreadPoolExecutor(max_workers=1)` cho mọi tác vụ AI/GPU.
+  - Tuyệt đối cấm chạy song song 2 tác vụ AI trên GPU (mục tiêu tối ưu cho VRAM 6GB như NVIDIA GTX 1060).
+  - Hàm `acquire_slot()` bắt buộc có cơ chế tự động giải phóng slot cũ nếu nhận request mới từ cùng một dự án, loại bỏ hoàn toàn lỗi kẹt `TASK_ALREADY_RUNNING`.
 
-## 2. Quản lý Bộ nhớ VRAM & Model Lifecycle
-- **Quy tắc Single Model:** Tại một thời điểm, chỉ nạp đúng 1 model AI vào VRAM (ASR/OCR hoặc MT hoặc TTS).
-- **Thu hồi bộ nhớ tức thì:** Khi kết thúc tác vụ AI hoặc khi người dùng chuyển bước, giải phóng tài nguyên triệt để:
+## 2. Quản trị Tài nguyên & Zero-Leak VRAM Lifecycle
+- **Single-Active Model**: Tại một thời điểm, chỉ một model AI được nạp vào VRAM (hoặc Faster-Whisper, hoặc Hy-MT2, hoặc VieNeu).
+- **Thu hồi VRAM triệt để**: Khi tác vụ kết thúc hoặc chuyển bước:
   ```python
   import gc
   import torch
@@ -18,21 +19,37 @@
       torch.cuda.empty_cache()
       torch.cuda.ipc_collect()
   ```
-- **Không can thiệp mã nguồn gốc:** Tuyệt đối không sửa code bên trong `asr-ocr/`, `mt-translation/`, `tts-vieneu/`. Chỉ viết Adapter gọi qua `subprocess.Popen` hoặc script bridge trỏ đúng `python.exe` trong `venv` của từng module.
+- **Sidecar Lifecycle Manager (`llama-server.exe`)**:
+  - Tự động kiểm tra `bin/llama-server.exe` (`ensure_llama_server`). Nếu chưa có, tự động tải portable binary từ nguồn uy tín.
+  - Khởi động subprocess khi bắt đầu dịch Step 2 và tự động hủy tiến trình khi dịch xong để hệ điều hành thu hồi 100% VRAM (Zero-Leak).
 
-## 3. Giao tiếp Thời gian thực (Real-time Streaming)
-- Sử dụng **Server-Sent Events (SSE)** (`StreamingResponse(..., media_type="text/event-stream")`) để truyền tiến độ cho các tác vụ tốn thời gian:
+## 3. Khóa Tải Đơn nhiệm (Single-Download Queue Lock)
+- Khóa toàn cục `CURRENT_DOWNLOADING_MODEL_ID`: Tại một thời điểm chỉ cho phép tải duy nhất 1 model AI.
+- Sử dụng endpoint CDN Mirror (`hf-mirror.com`) khi tải từ HuggingFace để đảm bảo tốc độ 15-40 MB/s tại Việt Nam.
+- Truyền tiến độ tải dạng SSE stream (`GET /api/models/download-stream` hoặc tương đương).
+
+## 4. Giao tiếp Thời gian thực (SSE) & Chuẩn Lỗi RFC 7807
+- Mọi luồng xử lý dài (Nhận diện ASR, Dịch MT, Tổng hợp TTS, Xuất video) bắt buộc sử dụng **Server-Sent Events (SSE)** (`StreamingResponse(..., media_type="text/event-stream")`).
+- Đảm bảo flush dữ liệu liên tục (`yield f"data: {json.dumps(payload)}\n\n"`).
+- Khi có lỗi nghiệp vụ hoặc ngoại lệ, bắt buộc trả về response chuẩn **RFC 7807**:
   ```json
-  data: {"step": "recognition", "status": "processing", "progress": 45.5, "message": "Đang nhận diện câu 15/30...", "cue": {...}}
+  {
+    "error": {
+      "code": "CUDA_OUT_OF_MEMORY",
+      "message": "Không đủ bộ nhớ VRAM để khởi chạy mô hình Whisper Medium.",
+      "step": 1,
+      "details": { "free_vram_mb": 420, "required_vram_mb": 2048 }
+    }
+  }
   ```
-- Kết thúc stream bằng event `{"status": "completed", "result": {...}}` hoặc `{"status": "error", "error": "..."}`.
 
-## 4. Truyền tải Video/Audio (Media Streaming)
+## 5. Truyền tải Video & Audio (HTTP 206 Partial Content)
 - Endpoint `/api/media/stream` bắt buộc hỗ trợ **HTTP Range Requests (Status Code 206 Partial Content)**.
-- Cho phép trình duyệt và video player tua (seek) tùy ý mượt mà mà không nạp toàn bộ file dung lượng lớn vào RAM.
+- Cho phép trình duyệt tua (seek) video dung lượng lớn (1GB - 5GB) tức thời mà không nạp toàn bộ file vào RAM server.
 
-## 5. Xử lý & Hòa âm (Audio Mixing & Export)
-- **Chuẩn hóa Audio:** Tạo timeline audio bằng `numpy` và `soundfile` ở tần số lấy mẫu cố định (24kHz hoặc 44.1kHz).
-- **Time-Stretching:** Sử dụng `pyrubberband` hoặc thuật toán WSOLA co giãn thời lượng để khớp `speed_factor` của từng cue.
-- **Ducking:** Hạ âm lượng nhạc nền (BGM) xuống mức cấu hình (ví dụ -12 dB) với attack 150ms và release 400ms trong các khoảng thời gian có tiếng lồng tiếng.
-- **Ghép Video Cuối cùng:** Gọi FFmpeg CLI với `-c:v copy -c:a aac -b:a 192k` để mux video cực nhanh mà không re-encode lại hình ảnh.
+## 6. Xử lý Âm thanh DSP & Hòa âm (Audio Ducking, Gap Borrowing & Subtitle Sync)
+- **Thuật toán Mượn khoảng lặng (Silence Gap Borrowing)**: Tận dụng khoảng lặng tự nhiên giữa các câu thoại gốc để nới rộng thời gian đọc cho câu dịch ($R_{speed} = \operatorname{clamp}(R_{raw}, 1.0, 2.0)$).
+- **Audio Ducking**: Tự động hạ âm lượng nhạc nền BGM xuống tỉ lệ cấu hình (mặc định -16.5 dB) với attack 150ms và release 400ms khi có giọng thuyết minh AI.
+- **Timing Offset & Chống Đè giọng (Collision Prevention)**:
+  - Cung cấp API `/api/step3/sync-subtitles` và `/api/step3/timing-offset` để căn chỉnh lại `placedStartTime`, `placedEndTime` khi câu đọc thực tế dài hơn thời lượng gốc.
+- **Xuất video cuối cùng (Muxing)**: Gọi FFmpeg CLI với `-c:v copy -c:a aac -b:a 192k` để ghép âm thanh và video thành phẩm siêu nhanh mà không phải re-encode lại luồng hình ảnh.

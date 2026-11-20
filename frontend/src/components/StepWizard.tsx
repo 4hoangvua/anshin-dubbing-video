@@ -10,7 +10,7 @@ import { useProjectStore } from '../stores/projectStore'
 import { useCueStore } from '../stores/cueStore'
 
 interface StepDef {
-  id: number
+  id: 1 | 2 | 3 | 4
   title: string
   subtitle: string
   icon: React.ElementType

@@ -48,6 +48,37 @@ from sentence_reconstructor import SentenceReconstructor, MergedCueGroup
 from global_context import GlobalContextExtractor, GlobalVideoContext
 from scene_batcher import SceneBatcher, SceneBatch
 
+# Regex phát hiện và loại bỏ triệt để các mã surrogate (U+D800 đến U+DFFF)
+SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+
+
+def clean_surrogates(val: Any) -> Any:
+    """Xóa bỏ triệt để các ký tự Unicode surrogate cấm trong UTF-8 (chuẩn lemyloi)."""
+    if isinstance(val, str):
+        return SURROGATE_RE.sub("", val)
+    elif isinstance(val, dict):
+        return {clean_surrogates(k): clean_surrogates(v) for k, v in val.items()}
+    elif isinstance(val, list):
+        return [clean_surrogates(x) for x in val]
+    return val
+
+
+def normalize_target_lang(lang_raw: Optional[str]) -> str:
+    """Chuẩn hóa ngôn ngữ đích về mã 2 ký tự (vi, zh, en, ja, ko)."""
+    s = (lang_raw or "vi").lower().strip()
+    if any(k in s for k in ["việt", "viet", "vi"]):
+        return "vi"
+    if any(k in s for k in ["anh", "eng", "en"]):
+        return "en"
+    if any(k in s for k in ["trung", "chin", "zh"]):
+        return "zh"
+    if any(k in s for k in ["nhật", "jap", "ja"]):
+        return "ja"
+    if any(k in s for k in ["hàn", "kor", "ko"]):
+        return "ko"
+    return s[:2] if len(s) >= 2 else "vi"
+
+
 DEFAULT_SERVER_URL = "http://localhost:1234"
 DEFAULT_MODEL_NAME = "Hy MT2 1.8B Q8_0"
 
@@ -158,12 +189,15 @@ class SubtitleItem:
             "duration": self.duration,
             "duration_sec": self.duration,
             "source_text": self.source_text,
+            "originalText": self.source_text,
             "target_text": self.target_text,
+            "translatedText": self.target_text,
             "text": self.target_text,
             "speaker": self.speaker,
             "speaker_id": self.speaker_id,
             "syllables": self.syllables,
             "recommended_tts_speed_rate": self.recommended_tts_speed_rate,
+            "recommendedTtsSpeedRate": self.recommended_tts_speed_rate,
             "is_continuation": self.is_continuation,
         }
 
@@ -180,20 +214,44 @@ class SubtitleItem:
         }
 
 
-def load_subtitles(file_path: Path) -> List[SubtitleItem]:
-    """Đọc dữ liệu phụ đề từ file JSON (chuẩn Whisper/ASR) hoặc SRT."""
+def load_subtitles(file_path: Optional[Path]) -> List[SubtitleItem]:
+    """Đọc dữ liệu phụ đề từ file JSON (chuẩn Whisper/ASR), SRT hoặc stdin buffer."""
     items: List[SubtitleItem] = []
-    if not file_path.exists():
+    raw = ""
+
+    if file_path is None or str(file_path).strip() in ("", "-"):
+        try:
+            raw_bytes = sys.stdin.buffer.read()
+            raw = raw_bytes.decode("utf-8", errors="replace").strip()
+        except Exception:
+            raw = ""
+    elif file_path.exists():
+        raw = file_path.read_text(encoding="utf-8", errors="replace").strip()
+
+    if not raw:
         return items
 
-    raw = file_path.read_text(encoding="utf-8")
-    if file_path.suffix.lower() == ".json":
-        payload = json.loads(raw)
+    raw = clean_surrogates(raw)
+
+    is_json = False
+    payload = None
+    if file_path and file_path.suffix.lower() == ".json":
+        is_json = True
+    elif raw.startswith("{") or raw.startswith("["):
+        is_json = True
+
+    if is_json:
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = None
+
+    if payload is not None:
         records = []
         if isinstance(payload, list):
             records = payload
         elif isinstance(payload, dict):
-            for k in ("cues", "subtitles", "segments", "data"):
+            for k in ("cues", "subtitles", "segments", "data", "items"):
                 if k in payload and isinstance(payload[k], list):
                     records = payload[k]
                     break
@@ -204,6 +262,8 @@ def load_subtitles(file_path: Path) -> List[SubtitleItem]:
                         break
 
         for i, rec in enumerate(records, start=1):
+            if not isinstance(rec, dict):
+                continue
             try:
                 c_id = int(rec.get("id", rec.get("index", i)))
             except (ValueError, TypeError):
@@ -211,14 +271,14 @@ def load_subtitles(file_path: Path) -> List[SubtitleItem]:
 
             start_sec = float(rec.get("startTime", rec.get("start", 0.0)))
             end_sec = float(rec.get("endTime", rec.get("end", start_sec + rec.get("duration", 2.0))))
-            text = str(rec.get("source_text") or rec.get("text", "")).strip()
+            text = str(rec.get("source_text") or rec.get("text") or rec.get("originalText", "")).strip()
             speaker = str(rec.get("speaker", "Speaker 1"))
             speaker_id = str(rec.get("speaker_id", "SPEAKER_00"))
             conf = float(rec.get("confidence", 0.95))
 
             items.append(SubtitleItem(c_id, start_sec, end_sec, text, speaker=speaker, speaker_id=speaker_id, confidence=conf))
 
-    elif file_path.suffix.lower() == ".srt":
+    else:
         blocks = re.split(r"\n\s*\n", raw.strip().replace("\r\n", "\n"))
         for i, block in enumerate(blocks, start=1):
             lines = [l.strip() for l in block.split("\n") if l.strip()]
@@ -347,7 +407,7 @@ def build_system_prompt_hymt(is_chinese: bool, context_synopsis: str = "", perso
             p += f"【风格要求】：{style_prompt}\n"
         p += (
             "【规则】：\n"
-            "1. 语言自然简练，适合配音，严禁保留任何汉字。\n"
+            "1. 语言自然简练，契合配音口语节奏，避免冗长虚词，但保持核心原意完整准确。\n"
             "2. 严格保持编号 [1], [2], ...，每行一一对应，严禁合并句子，严禁输出任何多余解释。"
         )
         return p
@@ -360,7 +420,7 @@ def build_system_prompt_hymt(is_chinese: bool, context_synopsis: str = "", perso
         p += f"Style: {style_prompt}\n"
     p += (
         "Guidelines:\n"
-        "1. Translate each line into natural, concise Vietnamese suitable for voice dubbing.\n"
+        "1. Translate each line into natural, concise Vietnamese suitable for voice dubbing (keep phrasing crisp and paced well for video timing, without omitting essential meaning or distorting context).\n"
         "2. Keep the exact same numbering tags [1], [2], ... at the start of each line.\n"
         "3. Translate line by line strictly 1-to-1. Do not merge lines.\n"
         "4. Only output the numbered translated lines, no explanations or prefixes."
@@ -683,6 +743,7 @@ def main():
     parser.add_argument("--device", type=str, default="auto", help="Tham số tương thích (bỏ qua với LM Studio)")
     parser.add_argument("--batch-size", type=int, default=10, help="Kích thước batch phân cảnh")
     args = parser.parse_args()
+    args.tgt_lang = normalize_target_lang(args.tgt_lang)
 
     print("=" * 70)
     print("🎬 KIỂM THỬ MÔ HÌNH DỊCH CHUYÊN DỤNG HY-MT2 (LM STUDIO SERVER)")

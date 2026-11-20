@@ -1,35 +1,79 @@
-# Frontend Architecture & Implementation Rules for Dubbing Video
+# Frontend Architecture & Implementation Rules for Dubbing Video Studio
 
-## 1. Công nghệ & Nền tảng
-- **Tech Stack:** Vite + React 19 + TypeScript + Tailwind CSS (chuẩn bị sẵn sàng cho Tauri v2).
-- **Desktop First:** Ưu tiên tối đa trải nghiệm máy tính để bàn (Desktop layout), độ phản hồi tức thì (<100ms), không giật lag.
+## 1. Nền tảng Công nghệ & Thiết kế
+- **Tech Stack**: React 19 + TypeScript + Vite + Meta Astryx (`@astryxdesign/core`, StyleX) (hướng tới Desktop Studio / Tauri v2).
+- **Trải nghiệm Desktop-First (CapCut-lite)**: Phản hồi tức thì (<100ms), 60 FPS mượt mà ngay cả với video dài trên 2.000 câu thoại.
+- **Cô lập Design System**: Toàn bộ component UI swizzle từ Astryx đặt trong `src/design-system/` (Button, Input, Select, Slider, Dialog, Badge, Tooltip, Tabs, Toast). Tuyệt đối là pure UI (stateless hoặc UI-state only), không chứa business logic lồng tiếng.
+- **Dark/Light Mode tập trung**: 100% token màu sắc, khoảng cách, viền được quản lý qua StyleX tokens tại `src/theme/tokens.stylex.ts` và overrides tại `darkTheme.stylex.ts`, `lightTheme.stylex.ts`.
 
-## 2. Quy tắc Ảo hóa Danh sách Cues (Virtual Scrolling) - BẮT BUỘC
-- Mọi danh sách hiển thị phụ đề/cues (ở Bước 1, Bước 2, Bước 3) **bắt buộc sử dụng `@tanstack/react-virtual`**.
-- Tuyệt đối không dùng `array.map()` thông thường để render danh sách cues dài.
-- Chỉ render các thẻ DOM nằm trong vùng nhìn thấy (viewport) cộng 3-5 phần tử đệm (overscan). Đảm bảo giao diện duy trì 60 FPS mượt mà kể cả khi video có hơn 1.000 câu thoại.
+## 2. Kiến trúc 6 Zustand Stores Độc lập (Isolated State Architecture)
+Tuyệt đối không gộp chung dữ liệu. Hệ thống phân định nghiêm ngặt thành 6 stores:
+1. **`playerStore` (60Hz Transient Playback)**:
+   - Quản lý `currentTime`, `duration`, `isPlaying`, `playbackRate`, `volume`, `isMuted`, `seekTarget`.
+   - **CẤM TUYỆT ĐỐI**: Không subscribe `playerStore` vào các component cha, container tổng hoặc bảng thoại `VirtualCueTable`.
+   - Cập nhật Playhead và text timecode bằng transient subscription (`usePlayerStore.subscribe((state) => ...)` hoặc `requestAnimationFrame`), cập nhật trực tiếp Canvas Overlay hoặc `ref.textContent`.
+2. **`cueStore` (Data & Undo/Redo Temporal Stack)**:
+   - Lưu trữ mảng `cues: CueItem[]` và ngăn xếp lịch sử Undo/Redo (`past`, `future`, tối đa 50 bước).
+   - Hỗ trợ thao tác cục bộ theo ID (`updateCue`, `updateText`, `updateSpeaker`, `splitCue`, `mergeCues`, `deleteCue`).
+   - Tự động tính toán lại `duration = Math.max(0, endTime - startTime)` khi cập nhật mốc thời gian.
+3. **`timelineStore` (Coordinates & Viewport)**:
+   - Quản lý `zoom` (px/sec: 20 - 500), `scrollLeft`, `viewportWidth`, danh sách track, công cụ (`select`, `split`, `slip`), và snap grid.
+4. **`projectStore` (Metadata & Pipeline)**:
+   - Quản lý `project`, `settings` (DSP, Ducking, Voice Engine), `speakers: SpeakerProfile[]`, `activeStep` (1-4), và đồng bộ lưu trữ server (`saveProject`).
+5. **`modelStore` (Single-Download Queue & Hub)**:
+   - Quản trị trạng thái model (`🟢 Sẵn sàng` / `☁️ Chưa tải`).
+   - Khóa tải đơn nhiệm (`downloadingModelId`): Chặn triệt để tải nhiều model cùng lúc.
+   - Bắt luồng SSE cập nhật tiến độ tải đồng bộ cho cả Modal Hub và các nút bấm thích ứng (Morphing Action Buttons).
+6. **`uiStore` (Theme & Feedback)**:
+   - Quản lý `theme` ('dark' | 'light'), collapse panel, modals (`modelHub`, `settings`), và hàng đợi `toasts`, `banner`.
 
-## 3. Phân tách Store Trạng thái (Zustand State Isolation)
-Không gộp chung toàn bộ dữ liệu vào một Store khổng lồ như Lemyloi. Bắt buộc tách thành 3 Store độc lập:
-1. **`projectStore`**: Lưu metadata dự án (`id`, `name`, `media_path`, `speakers`, `active_step`, `settings`).
-2. **`cueStore`**: Lưu mảng `cues` và các action thao tác câu (`updateCueText`, `updateCueSpeaker`, `splitCue`, `mergeCues`, `updateCueAudio`).
-   - Cung cấp cơ chế update theo ID cục bộ để tránh re-render các câu không bị ảnh hưởng.
-3. **`playerStore`**: Quản lý trạng thái video phát sóng (`currentTime`, `duration`, `isPlaying`, `volume`).
-   - Cập nhật tần số cao (60 Hz) nhưng chỉ những component cần hiển thị thời gian hoặc thanh trượt mới lắng nghe `playerStore`. Bảng cues không được lắng nghe trực tiếp `currentTime` của `playerStore` nếu không cần thiết.
+## 3. Quy tắc Hiệu năng 60 FPS (BẮT BUỘC)
+- **Virtual Scrolling cho Bảng Thoại**: Bắt buộc dùng `@tanstack/react-virtual` cho mọi danh sách cues. Cấm dùng `cues.map()` trực tiếp. Memoize từng dòng `CueRow`.
+- **Dual-Layer HTML5 Canvas Timeline**:
+  - Không dùng DOM divs để dựng timeline phụ đề.
+  - Tầng Base Canvas: Vẽ ruler, video track, cue boxes, audio waveform mockup. Áp dụng Viewport Culling bằng Binary Search $O(\log N)$ (chỉ vẽ cues nằm trong vùng `[scrollLeft / zoom, (scrollLeft + width) / zoom]`). Chỉ vẽ lại khi zoom, scroll, hoặc data cue thay đổi.
+  - Tầng Playhead Overlay Canvas: Nằm đè lên trên, chỉ vẽ kim chỉ giờ màu đỏ theo xung nhịp 60 FPS từ `playerStore`, không bao giờ kích hoạt vẽ lại tầng Base Canvas.
+  - Hỗ trợ HiDPI / Retina: Chuẩn hóa tỉ lệ canvas với `window.devicePixelRatio`.
 
-## 4. Kiến trúc Giao diện Split-View Studio
-- **Vùng bên trái (40% - 45%):**
-  - Trình phát Video HTML5 Native (kết nối endpoint `/api/media/stream` qua HTTP 206).
-  - Lớp phủ phụ đề (Subtitle Overlay) hiển thị câu thoại hiện tại theo thời gian thực.
-  - Cụm điều khiển Play/Pause, tua lùi 5s, tua tới 5s, thanh trượt thời gian.
-- **Vùng bên phải (55% - 60%):**
-  - Thanh Tab 4 bước trực quan: `[1. Nhận diện] -> [2. Dịch thuật] -> [3. Lồng tiếng] -> [4. Xuất file]`.
-  - Không gian thao tác theo từng bước:
-    - Bước 1 (Recognition): Bảng câu gốc, gán Speaker, sửa text, nút Play nghe câu lẻ.
-    - Bước 2 (Translation): Bảng 2 cột song song (Gốc - Dịch), cấu hình xưng hô, sửa câu dịch, nút Dịch lại câu lẻ.
-    - Bước 3 (Narration): Bảng gán Voice từng Speaker, nút Nghe thử giọng câu lẻ, nút Tạo lại giọng câu lẻ.
-    - Bước 4 (Export): Tùy chỉnh tỉ lệ âm lượng BGM/Giọng đọc, nút Bắt đầu xuất video hoàn chỉnh.
+## 4. Giao tiếp Mạng & Xử lý Lỗi chuẩn RFC 7807
+- Mọi API call phải đi qua `src/core/apiClient.ts` tập trung, tự động timeout, chuẩn hóa lỗi RFC 7807 (`code`, `message`, `step`, `details`).
+- Chuyển đổi mã lỗi sang thông điệp tiếng Việt thân thiện qua `src/core/errorMapper.ts`.
+- Mọi luồng SSE phải dùng `src/core/sseClient.ts`, bắt lỗi trực tiếp mà không nuốt ngoại lệ (fix silent error swallow).
+- Bọc toàn bộ các vùng chính bằng `src/core/ErrorBoundary.tsx` để ngăn crash trắng trang.
 
-## 5. Kết nối Backend & Lắng nghe SSE
-- Tạo custom hook `useSSE()` để kết nối endpoint `/api/stepX/...`, nhận dữ liệu streaming JSON và cập nhật thanh tiến trình theo thời gian thực.
-- Xử lý lỗi kết nối một cách êm ái (graceful fallback) và hiển thị thông báo toast rõ ràng.
+## 5. Quy trình Kiểm tra Bắt buộc (Verification Loop)
+Trước khi kết thúc bất kỳ Phase nào hoặc commit thay đổi, bắt buộc phải chạy và đạt 100% PASS bộ 3 lệnh:
+1. `npx tsc --noEmit` (0 errors)
+2. `npm run lint` (0 warnings/errors)
+3. `npm run build` (Build bundle thành công)
+
+## 6. Quy tắc Phòng thủ Dữ liệu Bất biến & Chống Lỗi Truy Cập Mảng Undefined (Defensive Programming & Zero-Crash Null Safety) - [HỌC TỪ LỖI THỰC TẾ]
+**Bối cảnh sự cố**: Lỗi `Cannot read properties of undefined (reading 'length')` từng xuất hiện nhiều lần làm sập `ErrorBoundary` của Video Player & Timeline khi dữ liệu store chưa kịp nạp xong hoặc sau khi reset dự án.
+
+**CÁC NGUYÊN TẮC BẮT BUỘC TUÂN THỦ TOÀN BỘ CODEBASE:**
+1. **Cấm gọi thuộc tính/phương thức mảng trực tiếp khi chưa kiểm tra `Array.isArray()`**:
+   - Tuyệt đối KHÔNG viết `cues.length`, `cues.find(...)`, `cues.map(...)`, `targetTimes.length`, `videoClips.find(...)`, `[...cues]` trực tiếp.
+   - Luôn sử dụng fallback chuẩn hóa an toàn:
+     ```typescript
+     // Tại cấp component:
+     const EMPTY_CUES: CueItem[] = [];
+     const rawCues = useCueStore((s) => s.cues);
+     const cues = Array.isArray(rawCues) ? rawCues : EMPTY_CUES;
+     ```
+2. **Quy tắc Guard Clause bắt buộc tại tầng Utility toán học**:
+   - Mọi hàm trong `src/utils/` (`binarySearch.ts`, `snapping.ts`, `canvasDraw.ts`, `filmstripCache.ts`) nhận tham số mảng BẮT BUỘC phải có guard clause ở dòng đầu tiên:
+     ```typescript
+     if (!arr || !Array.isArray(arr) || arr.length === 0) return defaultVal;
+     ```
+3. **Phòng thủ tại Setter của Zustand Stores**:
+   - Mọi Action nhận mảng (như `setCues`, `setSelectedCueIds`, `setVideoClips`, `deleteMultipleCues`) bắt buộc phải bọc an toàn:
+     ```typescript
+     setSelectedCueIds: (ids) => {
+       const safeIds = Array.isArray(ids) ? ids : [];
+       set({ selectedCueIds: safeIds, selectedCueId: safeIds.length > 0 ? safeIds[0] : null });
+     }
+     ```
+4. **Phòng thủ Spread Operator `[...arr]`**:
+   - Không bao giờ spread trực tiếp `[...cues]` vì nếu `cues` là `undefined` hoặc `null` sẽ gây ra ngoại lệ nghiêm trọng `TypeError: undefined is not iterable`.
+   - Bắt buộc dùng: `[...(Array.isArray(cues) ? cues : [])]`.
+

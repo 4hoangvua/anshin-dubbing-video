@@ -97,7 +97,7 @@ export const Header: React.FC = () => {
 
   useEffect(() => {
     if (showModal && modalMode === 'load') {
-      fetchRecentProjects()
+      void fetchRecentProjects()
     }
   }, [showModal, modalMode, fetchRecentProjects])
 

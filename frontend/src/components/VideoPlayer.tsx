@@ -67,8 +67,14 @@ export const VideoPlayer: React.FC = () => {
 
   // Seeking triggered from outside (e.g. clicking a cue in table)
   useEffect(() => {
-    if (seekTarget !== null && videoRef.current) {
-      videoRef.current.currentTime = seekTarget
+    if (seekTarget !== null) {
+      if (Number.isFinite(seekTarget) && videoRef.current) {
+        try {
+          videoRef.current.currentTime = Math.max(0, seekTarget)
+        } catch (err) {
+          console.warn('Cannot set video currentTime:', err)
+        }
+      }
       clearSeekTarget()
     }
   }, [seekTarget, clearSeekTarget])
@@ -127,9 +133,11 @@ export const VideoPlayer: React.FC = () => {
       if (currentPlayingCueIdRef.current !== activeCue.id) {
         currentPlayingCueIdRef.current = activeCue.id
 
-        // Duck video original sound to 15%
+        // Audio Ducking (chỉ hạ khi bật autoDucking)
+        const isDucking = project?.settings?.autoDucking ?? false
+        const duckFactor = isDucking ? (project?.settings?.duckingVolume ?? 0.15) : 1.0
         if (videoRef.current) {
-          videoRef.current.volume = isMuted ? 0 : volume * 0.15
+          videoRef.current.volume = isMuted ? 0 : volume * duckFactor
         }
 
         const audioUrl = activeCue.audioFile.startsWith('/api')
@@ -149,9 +157,15 @@ export const VideoPlayer: React.FC = () => {
         previewAudioRef.current = audio
 
         // Synchronize offset if user played into the middle of the cue
-        const cueOffset = Math.max(0, (currentTime - activeCue.startTime) * targetRate)
-        if (cueOffset > 0.05) {
-          audio.currentTime = cueOffset
+        const safeStart = Number.isFinite(activeCue.startTime) ? activeCue.startTime : 0
+        const safeRate = Number.isFinite(targetRate) && targetRate > 0 ? targetRate : 1.0
+        const cueOffset = Math.max(0, (currentTime - safeStart) * safeRate)
+        if (Number.isFinite(cueOffset) && cueOffset > 0.05) {
+          try {
+            audio.currentTime = cueOffset
+          } catch (err) {
+            console.warn('Cannot set audio currentTime:', err)
+          }
         }
 
         audio.play().catch(() => {})
@@ -204,8 +218,12 @@ export const VideoPlayer: React.FC = () => {
 
   const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(e.target.value)
-    if (videoRef.current) {
-      videoRef.current.currentTime = newTime
+    if (Number.isFinite(newTime) && videoRef.current) {
+      try {
+        videoRef.current.currentTime = Math.max(0, newTime)
+      } catch (err) {
+        console.warn('Cannot set video currentTime:', err)
+      }
       setCurrentTime(newTime)
     }
     // Stop current voice preview on seek so it re-syncs
@@ -218,9 +236,17 @@ export const VideoPlayer: React.FC = () => {
 
   const skipSeconds = (sec: number) => {
     if (videoRef.current) {
-      const nextTime = Math.min(Math.max(0, videoRef.current.currentTime + sec), duration)
-      videoRef.current.currentTime = nextTime
-      setCurrentTime(nextTime)
+      const cur = Number.isFinite(videoRef.current.currentTime) ? videoRef.current.currentTime : 0
+      const dur = Number.isFinite(duration) && duration > 0 ? duration : 0
+      const nextTime = dur > 0 ? Math.min(Math.max(0, cur + sec), dur) : Math.max(0, cur + sec)
+      if (Number.isFinite(nextTime)) {
+        try {
+          videoRef.current.currentTime = nextTime
+        } catch (err) {
+          console.warn('Cannot set video currentTime:', err)
+        }
+        setCurrentTime(nextTime)
+      }
     }
     if (previewAudioRef.current) {
       previewAudioRef.current.pause()

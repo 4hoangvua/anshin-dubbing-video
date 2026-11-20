@@ -1,0 +1,76 @@
+/* Global Studio CSS Reset & Variable Mappings */
+:root {
+  --bg-app: #0f1117;
+  --bg-surface-0: #161922;
+  --bg-surface-1: #1e2230;
+  --bg-surface-2: #282e42;
+  --bg-surface-active: #343c56;
+  --border-subtle: #262c3d;
+  --border-strong: #3e4763;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-primary: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-success: #22c55e;
+  --accent-warning: #f59e0b;
+  --accent-danger: #ef4444;
+  --timeline-playhead: #ef4444;
+  --timeline-cue: #1e3a5f;
+  --timeline-cue-border: #3b82f6;
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --bg-app: #f8fafc;
+  --bg-surface-0: #ffffff;
+  --bg-surface-1: #f1f5f9;
+  --bg-surface-2: #e2e8f0;
+  --bg-surface-active: #cbd5e1;
+  --border-subtle: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --accent-primary: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-success: #16a34a;
+  --accent-warning: #d97706;
+  --accent-danger: #dc2626;
+  --timeline-playhead: #dc2626;
+  --timeline-cue: #dbeafe;
+  --timeline-cue-border: #3b82f6;
+  color-scheme: light;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Custom Scrollbars for Studio */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
